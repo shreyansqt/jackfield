@@ -319,6 +319,40 @@ tokens the same flow becomes a treadmill — which is exactly why the git-based 
 was rejected first and only reinstated once expiry was designed out. The two decisions
 are load-bearing on each other; changing one invalidates the other.
 
+### 3.4c Why this pairs with a work coordinator (PWC)
+
+The motivating incident is about *safety*. This section is about *leverage*, and it is
+probably the stronger argument for building jackfield at all.
+
+[PWC](https://github.com/shreyansqt/pwc) is a personal work coordinator: it holds a
+durable task board, and it **dispatches each task to its own agent session** — on any
+harness (claude, opencode, codex) and, over SSH+tmux, on **any machine**.
+
+Both capabilities are, today, hollow in exactly the same way:
+
+> PWC can place an agent anywhere. It cannot give it **hands**.
+
+A worker dispatched to `opencode` on a remote box arrives with whatever MCP servers and
+credentials happen to exist in *that machine's* config for *that harness* — which is
+usually nothing, and is never workspace-aware. So in practice you dispatch to the
+harness and the machine you happen to have set up by hand, which quietly defeats the
+point of being harness-agnostic and remote-capable.
+
+jackfield is the missing half:
+
+- **PWC routes the work. jackfield provisions the connections.**
+- A task in the `acme` workspace dispatched to `opencode` on a remote machine gets
+  *that workspace's* Jira, *that workspace's* Sentry, and the `acme` Cloudflare identity
+  — and explicitly **not** the personal ones sitting on the same disk.
+- Cost routing only pays off if a cheap model on a remote box can actually *do* the work.
+  It can't, if it has no tools. jackfield is what makes "route this to the cheapest
+  capable model, wherever it runs" a real sentence rather than an aspiration.
+
+The two are deliberately separate projects — a work coordinator and a connections panel
+are different concerns, and jackfield must stand alone for people who don't use PWC. But
+the seam between them is clean: **PWC decides *what* runs *where*; jackfield decides
+*what it can reach* and *as whom*.**
+
 ### 3.5 CLI, not a GUI
 
 A macOS menu-bar app was considered and rejected — the same reasoning that killed the
