@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+*.enc.yaml.bak
+# never commit a decrypted secret or an age private key
+secrets.yaml
+*.age
+keys.txt
