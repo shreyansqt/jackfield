@@ -14,7 +14,7 @@ Written 2026-07-13.
 
 Two people share a machine and an Anthropic account. One of them connects their Gmail as
 a claude.ai connector — a legitimate, useful thing to do. The other asks their agent to
-schedule a meeting, expecting it to use `gog` (the Google CLI), **because that is what
+schedule a meeting, expecting it to use [gog](https://github.com/openclaw/gogcli) (a Google CLI), **because that is what
 their instruction files say to use.**
 
 The agent looked at the tools available to it, saw a Gmail connector, and used it. The
@@ -78,7 +78,9 @@ Three nouns. Everything else follows from them.
 ### Connection
 A thing an agent can use. Three kinds:
 
-- **`mcp-stdio`** — a binary/script on this machine (`stackbar`, `gog`, Breeze, 1Password).
+- **`mcp-stdio`** — a binary or script on this machine
+  ([stackbar](https://github.com/shreyansqt/stackbar), [gog](https://github.com/openclaw/gogcli),
+  the 1Password app, or anything you've built yourself).
 - **`mcp-http`** — a remote MCP server (`mcp.atlassian.com`, `mcp.sentry.dev`).
 - **`cli`** — a command-line tool whose credentials we manage (`gh`, `wrangler`, `aws`).
   Not MCP at all, but it has exactly the same identity problem, so it belongs on the
@@ -229,9 +231,9 @@ upstream token auto-refresh was missing; verify before trusting it.
 State these plainly rather than discovering them mid-build.
 
 1. **Local stdio servers are binaries.** They must exist on the machine that runs them.
-   No config sync puts `stackbar`, `gog`, Breeze, or the 1Password app on a Cloudflare
-   Worker. And even bridged, the semantics don't survive: `stackbar` on the Mac mini
-   controls *the Mac mini's* services.
+   No config sync puts a local binary on a Cloudflare Worker. And even bridged, the
+   semantics don't survive: a service-manager MCP running on one machine controls *that
+   machine's* services, not another's.
 2. **claude.ai connectors are not ours to manage.** Anthropic-managed, tied to the
    claude.ai subscription, and explicitly **not loaded** when an API key is active. They
    will never appear in Codex or opencode, or in a cloud worker using an API key. The
@@ -251,9 +253,10 @@ State these plainly rather than discovering them mid-build.
   (`korotovsky/slack-mcp-server`, 1.7k★, accepts a static `xoxp-` token) so Codex and
   opencode get it too — and so a second person can patch in *their own* Slack under
   their own identity.
-- **Google**: already handled by Breeze (own MCP) + `gog`. The claude.ai Google
-  connectors should probably be **removed** — they are the ones currently showing "needs
-  authentication," and removing them eliminates the Gmail-identity leak at its source.
+- **Google**: covered by [gog](https://github.com/openclaw/gogcli) (a Google CLI with a
+  typed MCP server) plus, optionally, a self-hosted Gmail MCP. The claude.ai Google
+  connectors are then redundant and should be **removed** — removing them eliminates the
+  Gmail-identity leak at its source.
 - **Figma**: the official MCP is OAuth-only and explicitly refuses Personal Access
   Tokens; the PAT-based community alternatives are thin (single-digit stars). Leave the
   claude.ai connector in place; not worth owning.
@@ -262,6 +265,17 @@ State these plainly rather than discovering them mid-build.
   secret handling is gitignored plaintext. **Test it against the three harnesses first** —
   if it holds up, jackfield shrinks to "identity + workspace scoping + CLI profiles +
   SOPS" layered on top, which is a weekend rather than a month.
+- **Should jackfield install local binaries too?** A manifest entry for an `mcp-stdio`
+  connection names a binary that must already exist on the machine. On a *new* machine,
+  the config is useless until you install the binary. So an entry could carry an
+  `install:` recipe (a brew formula, a `go install`, an npm package, a git URL) and
+  `jf sync` could bring the machine up to spec — making "new laptop" a single command
+  rather than a scavenger hunt. Deliberately deferred: it turns jackfield into a package
+  manager, which is a much larger promise. Worth doing only if the manifest is otherwise
+  proven. Note it can *never* be complete — a private app you built yourself has no
+  public install recipe, so the honest scope is "install what can be installed, and tell
+  you plainly what you must supply yourself."
+
 - **Does anything else belong on the panel?** Env-var profiles, per-workspace `.env`,
   API keys for non-MCP services?
 

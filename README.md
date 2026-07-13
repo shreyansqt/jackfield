@@ -31,7 +31,7 @@ A real one, and the reason this project exists.
 
 Two people share a machine and an Anthropic account. One of them connects their Gmail
 as a claude.ai connector — a legitimate, useful thing to do. The other asks their agent
-to schedule a meeting, expecting it to use `gog`, the Google CLI, because **that is what
+to schedule a meeting, expecting it to use [gog](https://github.com/openclaw/gogcli), a Google CLI, because **that is what
 their instruction files say to use.**
 
 The agent looked at its available tools, saw a Gmail connector, and used it.
