@@ -69,6 +69,20 @@ missing is the assembly, and the reasons are structural:
   agent-workspace, enforced. That's not an oversight — it only becomes urgent when an
   autonomous agent runs unattended in a workspace and can reach the wrong account.
 
+**"But MetaMCP exists."** It does, and it's good — it just solves a different problem.
+MetaMCP is a **gateway**: it sits in the request path, holds tokens, proxies calls. That
+shape is driven by *organisational* needs — audit logs, central revocation, governing
+what employees can reach. It looks like company software because it is.
+
+jackfield is not in the request path at all. It is a **configuration authority**: it
+decides what is plugged in, writes the configs, and gets out of the way. Nothing to run,
+nothing to page you, no extra hop, no single point of failure for every tool call on
+every machine.
+
+The reason nobody has built the second thing is not that it's hard — it's that there is
+nobody to *sell* it to. A solo developer with four machines is not a market; they're a
+GitHub repo. Which is precisely why this one is open source.
+
 ---
 
 ## 2. The model
@@ -100,6 +114,82 @@ called **"Gmail (someone-else@…)"** tells you everything. A model choosing bet
 A top-level body of work (`~/work/acme`, `~/work/side-projects`) — the same unit PWC
 uses. A workspace **declares which connections it patches in**. An agent started there
 gets exactly those.
+
+### 2.1 The manifest, concretely
+
+Illustrative, not final — but the shape has to be real enough to argue with.
+
+```yaml
+identities:
+  personal:   { label: "you@personal" }
+  acme:       { label: "you@acme-corp" }
+  housemate:  { label: "someone-else@example.com" }   # a second human on this machine
+
+connections:
+  jira:
+    kind: mcp-http
+    url: https://mcp.atlassian.com/v1/mcp
+    identity: acme
+    auth:
+      header: Authorization
+      value: "Basic ${ATLASSIAN_ACME_BASIC}"      # from SOPS, injected at launch
+
+  sentry:
+    kind: mcp-http
+    url: https://mcp.sentry.dev/mcp
+    identity: acme
+    auth:
+      header: Authorization
+      value: "Sentry-Bearer ${SENTRY_ACME_TOKEN}"
+
+  slack-personal:
+    kind: mcp-stdio
+    command: slack-mcp-server
+    identity: personal
+    env: { SLACK_MCP_XOXP_TOKEN: "${SLACK_PERSONAL_TOKEN}" }
+
+  slack-housemate:                                 # same server, different human
+    kind: mcp-stdio
+    command: slack-mcp-server
+    identity: housemate
+    env: { SLACK_MCP_XOXP_TOKEN: "${SLACK_HOUSEMATE_TOKEN}" }
+
+  wrangler:
+    kind: cli
+    identity: personal
+    env:
+      CLOUDFLARE_API_TOKEN: "${CF_PERSONAL_TOKEN}"
+      CLOUDFLARE_ACCOUNT_ID: "${CF_PERSONAL_ACCOUNT}"
+
+workspaces:
+  ~/work/acme:
+    patch: [jira, sentry, wrangler@acme]
+  ~/work/side-projects:
+    patch: [slack-personal, wrangler]              # jira/sentry NOT patched in here
+```
+
+Three things this makes concrete:
+
+- **The same server appears twice under different identities** (`slack-personal`,
+  `slack-housemate`). That is not a special case — it is the normal case on a shared
+  machine, and it is why identity cannot be a field bolted onto a connection later.
+- **A workspace patches in a subset.** An agent in `side-projects` has no Jira. Not
+  "discouraged from using Jira" — *does not have it*.
+- **`wrangler@acme` vs `wrangler`** is the whole CLI-identity problem in one line: the
+  same binary, a different account, chosen by where you're standing.
+
+### 2.2 More than one human on a machine
+
+Not an edge case — it is the situation that produced the motivating incident, and it
+must work.
+
+Two people share a machine and an Anthropic account. Both legitimately need their own
+Slack, their own mail. The design must let the second person **patch in their own
+connections under their own identity**, and must make it obvious to a model (and to a
+human reading a tool list) which is which. The failure mode to avoid is not "the second
+person has access" — it is "nobody can tell whose account a tool will act as."
+
+This is why identity is a *display* property, not just a routing one.
 
 ---
 
@@ -192,6 +282,42 @@ objection above was correct, and it dissolves once tokens are long-lived. Then:
 - Gotchas: `.sops.yaml` `creation_rules` apply at *encryption* time — adding a recipient
   later needs `sops updatekeys` on existing files. Prefer `SOPS_AGE_KEY_FILE` over an
   inline `SOPS_AGE_KEY` on cloud workers (process lists and logs leak).
+
+### 3.4a The surface: what `jf` actually does
+
+The commands fall out of the model. Roughly:
+
+```
+jf status                 # the panel: every connection, its identity, is it authenticated?
+jf sync                   # regenerate every harness's config for this workspace
+jf auth <connection>      # (re-)authenticate one connection; write the secret back to SOPS
+jf run <cmd> [args...]    # run a CLI with this workspace's identity (jf run wrangler deploy)
+jf add / jf rm            # edit the manifest
+```
+
+`jf status` is the load-bearing one. The daily pain is *"which of my twelve connections
+is logged out this morning?"* — and today the only way to find out is to trip over it
+mid-task. A panel that shows, at a glance, **every connection, the identity it acts as,
+and whether its credential is still good** is most of the value before a single config
+is generated.
+
+`jf run` is what fixes the wrangler class of bug: the identity is chosen by *where you
+are*, not by whatever happens to be in a global credential store.
+
+### 3.4b Rotation: the workflow that has to not hurt
+
+Even long-lived tokens expire eventually, and the flow has to be one command, not a
+scavenger hunt:
+
+1. `jf status` shows `sentry` red — credential rejected.
+2. `jf auth sentry` walks you through minting a new token, writes it into the encrypted
+   secrets file, and commits.
+3. Every other machine picks it up on its next `git pull` + `jf sync`.
+
+**This only works because §3.3 made the tokens long-lived.** With daily-expiring OAuth
+tokens the same flow becomes a treadmill — which is exactly why the git-based approach
+was rejected first and only reinstated once expiry was designed out. The two decisions
+are load-bearing on each other; changing one invalidates the other.
 
 ### 3.5 CLI, not a GUI
 
