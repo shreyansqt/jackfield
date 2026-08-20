@@ -1,8 +1,7 @@
 # jackfield — design
 
-Status: **proposal**. Nothing is built. This documents the problem, the model, and the
-decisions taken so far, with the reasoning, so that whoever builds it (human or agent)
-inherits the *why* and not just the *what*.
+Status: **proposal with two pilots**. This document keeps the original design and its
+reasoning. The repository now includes a shared MCP gate and a `jf run` CLI gate.
 
 Written 2026-07-13.
 
@@ -207,6 +206,11 @@ Two ways to restrict what an agent can see:
 **Decision: (a).** It works with all three harnesses today, requires no runtime, and
 doesn't change how you start an agent. (b) is stronger in principle but pays a constant
 ergonomic tax for a marginal gain.
+
+**Pilot update, 2026-08-20:** workspace config alone cannot share one Slack process
+across several agent sessions. The Slack pilot therefore uses a small runtime gate.
+The CLI pilot also uses `jf run`, because native global credential stores do not enforce
+workspace identity. These pilots test the stronger option before the design changes.
 
 **Known limit of (a), stated honestly:** it cannot restrict things that don't live in a
 config file you control. The **claude.ai connectors** (Slack, Figma, Gmail, Drive,

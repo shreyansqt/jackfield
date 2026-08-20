@@ -10,9 +10,9 @@ That is what this is, for AI coding agents. Every MCP server, every CLI credenti
 every identity lands in one manifest — and you decide, per workspace, what's patched
 to what.
 
-> **Status: design with one experiment.** See [docs/design.md](docs/design.md) for
-> the main design. See [docs/workspace-gate-experiment.md](docs/workspace-gate-experiment.md)
-> for the isolated workspace gate prototype.
+> **Status: two local pilots.** See [docs/design.md](docs/design.md) for the main
+> design. The repository now contains a shared Slack workspace gate and a `jf run`
+> CLI gate.
 
 ## The problem
 
@@ -52,19 +52,24 @@ credential stores. Nobody chose. It just resolved.
   **which identity it acts as** and **which workspaces it belongs to**.
 - **Generates the native config** for Claude Code, Codex, and opencode — so an agent
   started in a workspace sees exactly that workspace's connections, and nothing else.
-- **CLI credential profiles.** `wrangler` in the client workspace uses the client's
-  Cloudflare account; in your own, your own. No more silently deploying to the wrong
-  account.
+- **CLI credential profiles.** `jf run wrangler` selects the Cloudflare profile from
+  the current workspace. The same rule now covers `gog` and AWS.
 - **Long-lived tokens** where the service offers them, so the daily re-auth chore stops
   existing.
 - **Replicable.** Set up a new machine, or a headless cloud worker, without
   re-authenticating twelve servers by hand.
 
-## What it is not
+## Current pilots
 
-Not a gateway. Not a proxy. Nothing sits in the request path — your agents talk to
-their MCP servers directly, exactly as they do today. jackfield decides *what is
-plugged in*, then gets out of the way.
+- `jackfield-gate` checks workspace data on every shared MCP tool call. The first
+  profile protects the Smarta Slack server.
+- `jf run` starts an approved CLI with one workspace profile. It removes ambient
+  credential variables and rejects command flags that can replace the selected
+  identity.
+
+These gates are local safety controls. A malicious process under the same macOS user
+can bypass them. A hard security boundary needs a trusted launcher or separate system
+users.
 
 ## License
 

@@ -1,0 +1,73 @@
+version: 1
+
+workspaces:
+  smarta:
+    roots:
+      - /Users/shreyans/workspaces/smarta
+    commands:
+      gog:
+        profiles: [gog-smarta]
+        default: gog-smarta
+      wrangler:
+        profiles: [wrangler-smarta]
+        default: wrangler-smarta
+      aws:
+        profiles: [aws-smarta-staging, aws-smarta-production]
+
+  side-projects:
+    roots:
+      - /Users/shreyans/workspaces/side-projects
+    commands:
+      gog:
+        profiles: [gog-personal]
+        default: gog-personal
+      wrangler:
+        profiles: [wrangler-personal]
+        default: wrangler-personal
+
+profiles:
+  gog-smarta:
+    executable: /opt/homebrew/bin/gog
+    prefix_args: [-a, shreyans.jain@smarta-steuern.de, --no-input]
+    denied_args: [-a, --account, --access-token, --client, --home]
+    unset_env: [GOG_ACCESS_TOKEN, GOG_ACCOUNT, GOG_CLIENT, GOG_HOME]
+
+  gog-personal:
+    executable: /opt/homebrew/bin/gog
+    prefix_args: [-a, shreyansqt@gmail.com, --no-input]
+    denied_args: [-a, --account, --access-token, --client, --home]
+    unset_env: [GOG_ACCESS_TOKEN, GOG_ACCOUNT, GOG_CLIENT, GOG_HOME]
+
+  wrangler-smarta:
+    executable: /Users/shreyans/.local/bin/mise
+    prefix_args: [exec, node@23, --, wrangler, --profile, default]
+    denied_args: [--profile]
+    unset_env: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_API_KEY, CLOUDFLARE_EMAIL, CLOUDFLARE_ACCOUNT_ID]
+
+  wrangler-personal:
+    executable: /Users/shreyans/.local/bin/mise
+    prefix_args: [exec, node@23, --, wrangler, --profile, personal]
+    denied_args: [--profile]
+    unset_env: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_API_KEY, CLOUDFLARE_EMAIL, CLOUDFLARE_ACCOUNT_ID]
+
+  aws-smarta-staging:
+    executable: /opt/homebrew/bin/aws
+    denied_args: [--profile]
+    env:
+      AWS_PROFILE: smt-group-aws-staging
+    unset_env: &aws_ambient_credentials
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_WEB_IDENTITY_TOKEN_FILE
+      - AWS_ROLE_ARN
+      - AWS_DEFAULT_PROFILE
+      - AWS_CONFIG_FILE
+      - AWS_SHARED_CREDENTIALS_FILE
+
+  aws-smarta-production:
+    executable: /opt/homebrew/bin/aws
+    denied_args: [--profile]
+    env:
+      AWS_PROFILE: smt-group-aws-production
+    unset_env: *aws_ambient_credentials

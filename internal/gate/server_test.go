@@ -21,6 +21,28 @@ type fixedRootsHandler struct {
 	paths []string
 }
 
+type handlerBox struct {
+	handler http.Handler
+}
+
+type swappingHandler struct {
+	current atomic.Value
+}
+
+func newSwappingHandler(handler http.Handler) *swappingHandler {
+	switcher := &swappingHandler{}
+	switcher.current.Store(handlerBox{handler: handler})
+	return switcher
+}
+
+func (switcher *swappingHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	switcher.current.Load().(handlerBox).handler.ServeHTTP(response, request)
+}
+
+func (switcher *swappingHandler) Swap(handler http.Handler) {
+	switcher.current.Store(handlerBox{handler: handler})
+}
+
 func (handler fixedRootsHandler) ListRoots(_ context.Context, _ mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
 	roots := make([]mcp.Root, 0, len(handler.paths))
 	for _, path := range handler.paths {
@@ -162,6 +184,41 @@ func TestProxyForwardsAllowedCallsAndBlocksOutsideCalls(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("the proxy sent %d calls upstream; expected 1", calls.Load())
 	}
+}
+
+func TestUpstreamReconnectsAfterServerReplacement(t *testing.T) {
+	switcher := newSwappingHandler(mockUpstreamHandler("first reply"))
+	upstreamHTTP := httptest.NewServer(switcher)
+	defer upstreamHTTP.Close()
+
+	upstream, _, err := ConnectUpstream(context.Background(), upstreamHTTP.URL+"/mcp")
+	if err != nil {
+		t.Fatalf("connect upstream: %v", err)
+	}
+	defer upstream.Close()
+
+	request := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "slack_test"}}
+	first, err := upstream.CallTool(context.Background(), request)
+	if err != nil || toolText(first) != "first reply" {
+		t.Fatalf("first upstream call failed: result=%v error=%v", first, err)
+	}
+
+	switcher.Swap(mockUpstreamHandler("second reply"))
+	second, err := upstream.CallTool(context.Background(), request)
+	if err != nil || toolText(second) != "second reply" {
+		t.Fatalf("reconnected upstream call failed: result=%v error=%v", second, err)
+	}
+}
+
+func mockUpstreamHandler(reply string) http.Handler {
+	mcpServer := server.NewMCPServer("mock-slack", "0.1.0", server.WithToolCapabilities(false))
+	mcpServer.AddTool(
+		mcp.NewTool("slack_test", mcp.WithDescription("A harmless Slack test tool.")),
+		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText(reply), nil
+		},
+	)
+	return server.NewStreamableHTTPServer(mcpServer)
 }
 
 func callProbeWithRoots(t *testing.T, profile Profile, paths []string) *mcp.CallToolResult {

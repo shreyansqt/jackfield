@@ -82,12 +82,13 @@ design keeps the workspace decision outside the agent process.
 The gate loads Slack's tool definitions when it starts. Each allowed call then goes to
 the shared Slack process.
 
-If the Slack process dies, all new Slack calls through this profile fail. StackBar
-shows the service failure. Existing stdio Slack sessions are independent during this
-pilot.
+If the Slack process dies, all new Slack calls through this profile fail while it is
+down. StackBar shows the service failure. Existing stdio Slack sessions are independent
+during this pilot.
 
-The gate does not reconnect after a Slack restart yet. Restart the complete StackBar
-service to reconnect both processes.
+The gate reconnects on the next tool call after Slack restarts at the same URL. It
+retries that call once. A restart can change Slack's tool definitions. The gate keeps
+its old definitions until the complete StackBar service restarts.
 
 The global harness configs can list the Slack tool definitions outside Smarta. The gate
 still denies every tool call from outside Smarta. Codex does not attach workspace data
@@ -95,6 +96,5 @@ to `tools/list`, so the gate cannot hide those definitions for Codex today.
 
 ## Next test
 
-Add automatic upstream reconnection. Then test process death while three clients stay
-connected. The current design requires a complete StackBar restart after upstream
-death.
+Stop only the upstream Slack process. Start it again at the same URL. Confirm that
+three connected clients recover on their next calls.
