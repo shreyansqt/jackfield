@@ -3,13 +3,18 @@
 `jf run` selects a CLI identity from the current directory. The pilot manifest is
 `jackfield.yaml`.
 
-Build the CLI:
+Install the CLI and the automatic command shims:
 
 ```sh
-go build -o jf ./cmd/jf
+scripts/install-cli-shims.sh
 ```
 
-Use `JF_CONFIG` when the current directory is outside this repository:
+The installer builds `jf` under `~/.local/lib/jackfield`. It links the manifest under
+`~/.config/jackfield`. It adds `jf`, `gog`, `wrangler`, and `aws` links to
+`~/.local/jackfield/bin`. The dotfiles shell config puts this directory first on
+`PATH`.
+
+Use Jackfield directly:
 
 ```sh
 export JF_CONFIG=/Users/shreyans/workspaces/side-projects/jackfield/jackfield.yaml
@@ -17,6 +22,14 @@ jf resolve gog
 jf run gog whoami --plain
 jf run wrangler r2 bucket list
 jf run --profile aws-smarta-staging aws sts get-caller-identity
+```
+
+The shims make the common commands shorter:
+
+```sh
+gog whoami --plain
+wrangler r2 bucket list
+aws --jf-profile aws-smarta-staging sts get-caller-identity
 ```
 
 The current profiles enforce these choices:
@@ -29,6 +42,7 @@ The current profiles enforce these choices:
 The launcher removes known ambient credential variables. It also rejects flags such as
 `--profile`, `--account`, and `--access-token` after it selects an identity.
 
-This design prevents accidental identity changes. It does not stop a process from
-running the original CLI directly. A later trusted launcher can restrict `PATH`, issue
-a short-lived workspace grant, and require that grant at each gate.
+This design prevents accidental identity changes. A process can still use an absolute
+path such as `/opt/homebrew/bin/aws` to bypass the shim. A later trusted launcher can
+restrict `PATH`, issue a short-lived workspace grant, and require that grant at each
+gate.

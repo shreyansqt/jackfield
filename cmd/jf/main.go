@@ -12,13 +12,35 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	args, err := commandArgs(filepath.Base(os.Args[0]), os.Args[1:])
+	if err == nil {
+		err = run(args)
+	}
+	if err != nil {
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) {
 			os.Exit(exitError.ExitCode())
 		}
 		fmt.Fprintf(os.Stderr, "jf: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func commandArgs(program string, args []string) ([]string, error) {
+	switch program {
+	case "gog", "wrangler", "aws":
+		result := []string{"run"}
+		if len(args) > 0 && args[0] == "--jf-profile" {
+			if len(args) < 2 || args[1] == "" {
+				return nil, fmt.Errorf("--jf-profile needs a profile name")
+			}
+			result = append(result, "--profile", args[1])
+			args = args[2:]
+		}
+		result = append(result, program)
+		return append(result, args...), nil
+	default:
+		return args, nil
 	}
 }
 
@@ -96,6 +118,13 @@ func findConfig(explicit string) (string, error) {
 			break
 		}
 		directory = parent
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		candidate := filepath.Join(home, ".config", "jackfield", "jackfield.yaml")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate, nil
+		}
 	}
 	return "", fmt.Errorf("no jackfield.yaml found; set JF_CONFIG or use --config")
 }
