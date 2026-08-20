@@ -1,0 +1,16 @@
+{
+  // StackBar service config. This file is read by the StackBar menu-bar app.
+  // Lives in this folder; the folder IS the service's working directory.
+
+  // Name shown in the StackBar menu.
+  "name": "jackfield-slack-smarta",
+
+  // Command(s) to start the service, run in order, each in its own process.
+  "commands": [
+    "env CLAUDE_PROJECT_DIR=/Users/shreyans/workspaces/smarta SLACK_MCP_HOST=127.0.0.1 SLACK_MCP_PORT=18182 /Users/shreyans/workspaces/side-projects/dotfiles/mcp/slack-mcp-wrapper.sh smarta --transport http",
+    "go run ./cmd/jackfield-gate --config gate.example.json --profile smarta --listen 127.0.0.1:8181 --upstream http://127.0.0.1:18182/mcp"
+  ],
+
+  // Optional: TCP port to health-check (green when it's accepting connections).
+  "port": 8181,
+}

@@ -10,8 +10,9 @@ That is what this is, for AI coding agents. Every MCP server, every CLI credenti
 every identity lands in one manifest — and you decide, per workspace, what's patched
 to what.
 
-> **Status: design.** Nothing is built yet. See [docs/design.md](docs/design.md) for
-> the problem, the model, and the plan.
+> **Status: design with one experiment.** See [docs/design.md](docs/design.md) for
+> the main design. See [docs/workspace-gate-experiment.md](docs/workspace-gate-experiment.md)
+> for the isolated workspace gate prototype.
 
 ## The problem
 

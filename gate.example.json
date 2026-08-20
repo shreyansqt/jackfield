@@ -1,0 +1,19 @@
+{
+  "profiles": {
+    "smarta": {
+      "allowed_roots": [
+        "/Users/shreyans/workspaces/smarta"
+      ]
+    },
+    "side-projects": {
+      "allowed_roots": [
+        "/Users/shreyans/workspaces/side-projects"
+      ]
+    },
+    "deny-test": {
+      "allowed_roots": [
+        "/private/tmp/jackfield-denied"
+      ]
+    }
+  }
+}
