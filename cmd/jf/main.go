@@ -80,7 +80,7 @@ func run(args []string) error {
 		return fmt.Errorf("%s needs a command", action)
 	}
 	commandName := flags.Arg(0)
-	resolution, err := config.Resolve(cwd, commandName, *requestedProfile)
+	resolution, commandArgs, err := config.ResolveArgs(cwd, commandName, *requestedProfile, flags.Args()[1:])
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func run(args []string) error {
 		fmt.Printf("workspace=%s command=%s profile=%s executable=%s\n", resolution.Workspace, resolution.Command, resolution.Profile, resolution.Launch.Executable)
 		return nil
 	case "run":
-		return resolution.Exec(flags.Args()[1:], os.Environ(), os.Stdin, os.Stdout, os.Stderr)
+		return resolution.Exec(commandArgs, os.Environ(), os.Stdin, os.Stdout, os.Stderr)
 	default:
 		return fmt.Errorf("unknown action %q; use run or resolve", action)
 	}

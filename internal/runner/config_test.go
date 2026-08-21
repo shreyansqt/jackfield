@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,13 +16,21 @@ func testConfig(root string) Config {
 			"work": {
 				Roots: []string{root},
 				Commands: map[string]CommandSelection{
-					"gog": {Profiles: []string{"gog-work"}, Default: "gog-work"},
-					"aws": {Profiles: []string{"aws-stage", "aws-production"}},
+					"gog":      {Profiles: []string{"gog-work"}, Default: "gog-work"},
+					"wrangler": {Profiles: []string{"wrangler-work"}, Default: "wrangler-work"},
+					"aws": {
+						Profiles: []string{"aws-stage", "aws-production"},
+						Aliases: map[string]string{
+							"upstream-stage":      "aws-stage",
+							"upstream-production": "aws-production",
+						},
+					},
 				},
 			},
 		},
 		Profiles: map[string]Profile{
 			"gog-work":       {Executable: "/bin/gog"},
+			"wrangler-work":  {Executable: "/bin/wrangler"},
 			"aws-stage":      {Executable: "/bin/aws"},
 			"aws-production": {Executable: "/bin/aws"},
 		},
@@ -86,6 +95,103 @@ func TestResolveAcceptsOnlyAllowedRequestedProfile(t *testing.T) {
 	_, err = testConfig(root).Resolve(root, "aws", "gog-work")
 	if err == nil || !strings.Contains(err.Error(), "not allowed") {
 		t.Fatalf("expected denied profile, got %v", err)
+	}
+}
+
+func TestResolveArgsSelectsAliasAndStripsIdentityFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"--profile", "upstream-production", "ecr", "describe-images"},
+		{"--profile=upstream-production", "ecr", "describe-images"},
+	} {
+		root := t.TempDir()
+		resolution, childArgs, err := testConfig(root).ResolveArgs(root, "aws", "", args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolution.Profile != "aws-production" {
+			t.Fatalf("unexpected profile: %s", resolution.Profile)
+		}
+		want := []string{"ecr", "describe-images"}
+		if !reflect.DeepEqual(childArgs, want) {
+			t.Fatalf("got arguments %v, want %v", childArgs, want)
+		}
+		if err := ValidateArgs(childArgs, []string{"--profile"}); err != nil {
+			t.Fatalf("sanitized arguments failed validation: %v", err)
+		}
+	}
+}
+
+func TestResolveArgsRejectsUnknownAlias(t *testing.T) {
+	root := t.TempDir()
+	_, _, err := testConfig(root).ResolveArgs(root, "aws", "", []string{"--profile", "unknown", "sts"})
+	if err == nil || !strings.Contains(err.Error(), "profile alias \"unknown\" is not configured") {
+		t.Fatalf("expected unknown alias error, got %v", err)
+	}
+}
+
+func TestResolveArgsAcceptsJackfieldProfileName(t *testing.T) {
+	root := t.TempDir()
+	resolution, childArgs, err := testConfig(root).ResolveArgs(root, "aws", "", []string{"sts", "--profile=aws-stage"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Profile != "aws-stage" || !reflect.DeepEqual(childArgs, []string{"sts"}) {
+		t.Fatalf("unexpected resolution or arguments: %+v %v", resolution, childArgs)
+	}
+}
+
+func TestResolveArgsKeepsNoFlagBehavior(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{"gog", "wrangler"} {
+		resolution, _, err := testConfig(root).ResolveArgs(root, command, "", []string{"version"})
+		if err != nil {
+			t.Fatalf("%s did not use its default: %v", command, err)
+		}
+		if resolution.Profile != command+"-work" {
+			t.Fatalf("%s selected profile %q", command, resolution.Profile)
+		}
+	}
+	if _, _, err := testConfig(root).ResolveArgs(root, "aws", "", []string{"sts"}); err == nil || !strings.Contains(err.Error(), "select a profile") {
+		t.Fatalf("expected AWS profile choice error, got %v", err)
+	}
+}
+
+func TestLoadAcceptsProfileAliases(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "jackfield.yaml")
+	manifest := fmt.Sprintf(`version: 1
+workspaces:
+  work:
+    roots: [%q]
+    commands:
+      tool:
+        profiles: [tool-work]
+        aliases:
+          upstream-work: tool-work
+profiles:
+  tool-work:
+    executable: /bin/tool
+`, root)
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := Load(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual := config.Workspaces["work"].Commands["tool"].Aliases["upstream-work"]; actual != "tool-work" {
+		t.Fatalf("unexpected alias target: %q", actual)
+	}
+}
+
+func TestValidateRejectsDisallowedAliasTarget(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	selection := config.Workspaces["work"].Commands["aws"]
+	selection.Aliases["upstream-other"] = "gog-work"
+	if err := config.validate(); err == nil || !strings.Contains(err.Error(), "uses disallowed profile") {
+		t.Fatalf("expected disallowed alias target error, got %v", err)
 	}
 }
 
