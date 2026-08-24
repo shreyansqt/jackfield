@@ -427,6 +427,97 @@ describe("writing a credential needs a fresh approval", () => {
   });
 });
 
+describe("the browser approval page", () => {
+  it("shows a confirmation page for a signed-in human", async () => {
+    const response = await call(
+      new Request(`${ORIGIN}/approvals?connection=slack-page&dev_token=${DEV_TOKEN}`, {
+        headers: { Accept: "text/html" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toContain("text/html");
+    const body = await response.text();
+    expect(body).toContain("slack-page");
+    expect(body).toContain("Approve this write");
+  });
+
+  it("refuses to show the page to a caller who is not signed in", async () => {
+    const response = await call(
+      new Request(`${ORIGIN}/approvals?connection=slack-page`, {
+        headers: { Accept: "text/html" },
+      }),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("mints a working ticket from the page's form submission", async () => {
+    const formResponse = await call(
+      new Request(`${ORIGIN}/approvals?dev_token=${DEV_TOKEN}`, {
+        method: "POST",
+        headers: {
+          Accept: "text/html",
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: "connection=slack-from-form",
+      }),
+    );
+
+    expect(formResponse.status).toBe(200);
+    expect(formResponse.headers.get("Content-Type")).toContain("text/html");
+    const shown = await formResponse.text();
+
+    // The page must show the ticket, because a person has to copy it.
+    const match = /<span class="code">([^<]+)<\/span>/.exec(shown);
+    expect(match).not.toBeNull();
+    const ticket = match![1]!;
+
+    // And that ticket must actually authorise the write.
+    const writeResponse = await call(
+      new Request(`${ORIGIN}/creds/slack-from-form`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret: "from-the-browser", approval_ticket: ticket }),
+      }),
+    );
+    expect(writeResponse.status).toBe(200);
+  });
+
+  it("still answers JSON to a client that is not a browser", async () => {
+    // The `jf` client and curl must keep the original contract.
+    const response = await call(
+      new Request(`${ORIGIN}/approvals`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${DEV_TOKEN}`,
+        },
+        body: JSON.stringify({ connection: "slack-json" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    const body = (await response.json()) as { approval_ticket: string };
+    expect(typeof body.approval_ticket).toBe("string");
+  });
+
+  it("does not let the form path skip the sign-in", async () => {
+    // A form submission with no identity must not mint a ticket.
+    const response = await call(
+      new Request(`${ORIGIN}/approvals`, {
+        method: "POST",
+        headers: {
+          Accept: "text/html",
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: "connection=slack-sneaky",
+      }),
+    );
+    expect(response.status).toBe(401);
+  });
+});
+
 describe("the credential store", () => {
   it("keeps no readable secret in KV", async () => {
     await storeCredential("slack-at-rest", "xoxp-must-not-appear", "shreyans@example.com");

@@ -113,6 +113,18 @@ it matched. One approval therefore permits one write, to one connection.
 The secret itself never passes through the browser. `jf auth` gets the ticket
 from the browser and then sends the secret directly to the hub.
 
+`/approvals` answers in two shapes, because it has two callers. A browser gets
+an HTML page: `GET /approvals?connection=<name>` names the connection and asks
+the person to approve, and the form's `POST` shows the ticket as text they can
+copy. A script gets the original JSON. The hub chooses by the `Accept` and
+`Content-Type` headers, so the contract `jf` and curl were written against did
+not change.
+
+Both shapes go through the same `authenticateHuman` check. The HTML path is a
+different presentation of the gate, not a way around it: a form submission
+without a verified identity is refused exactly as a JSON call is, and a test
+covers that case specifically.
+
 ## 4. Device revocation, and the bug that was found while testing
 
 Revocation deletes two keys: the `device:<tokenHash>` record and the

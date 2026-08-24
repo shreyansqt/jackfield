@@ -213,8 +213,20 @@ Replace `YOUR-HUB` with your hostname and `$TOKEN` with a device token.
 
 ### Store a credential
 
-Writing needs a fresh browser approval every time. First get an approval ticket
-as a signed-in human:
+Writing needs a fresh browser approval every time. First get an approval
+ticket.
+
+**In a browser**, which is what `jf auth` opens:
+
+```
+https://YOUR-HUB/approvals?connection=slack-work
+```
+
+The page names the connection and asks you to approve. It then shows the
+ticket, which you copy. Once Access is on, Access identifies you here. Until
+then, add `&dev_token=YOUR_DEV_SIGNIN_TOKEN` to that URL.
+
+**From a script**, the same endpoint answers JSON:
 
 ```bash
 curl -X POST https://YOUR-HUB/approvals \
@@ -222,9 +234,6 @@ curl -X POST https://YOUR-HUB/approvals \
   -H "Authorization: Bearer $DEV_SIGNIN_TOKEN" \
   -d '{"connection":"slack-work"}'
 ```
-
-Once Access is on, you make this call from the browser instead, and Access
-identifies you.
 
 Then write the credential with the ticket:
 
@@ -271,6 +280,7 @@ revoke a lost laptop from the machine still in your hand.
 | `POST` | `/device/token` | anyone holding the device code |
 | `GET` | `/device` | a person in a browser |
 | `POST` | `/device/approve` | a person in a browser |
+| `GET` | `/approvals` | a person in a browser |
 | `POST` | `/approvals` | a person in a browser |
 | `GET` | `/creds/:connection` | a device token |
 | `PUT` | `/creds/:connection` | an approval ticket, never a device token |

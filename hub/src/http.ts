@@ -18,10 +18,10 @@ export function oauthError(error: string, description: string, status = 400): Re
 }
 
 /** Returns an HTML page. */
-export function html(body: string, status = 200): Response {
+export function html(body: string, status = 200, headers: HeadersInit = {}): Response {
   return new Response(body, {
     status,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
+    headers: { "Content-Type": "text/html; charset=utf-8", ...headers },
   });
 }
 

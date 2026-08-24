@@ -334,3 +334,60 @@ func TestValidateArgsBlocksIdentityOverride(t *testing.T) {
 		t.Fatalf("expected normal arguments to pass: %v", err)
 	}
 }
+
+// The manifest carries the hub address for internal/hub. This decoder sets
+// KnownFields(true), so a hub key it does not know would fail the parse and stop
+// every `jf run` command on a machine that uses the hub.
+func TestLoadAcceptsTheHubAddress(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "jackfield.yaml")
+	manifest := fmt.Sprintf(`version: 1
+hub: https://hub.example.com
+workspaces:
+  work:
+    roots: [%q]
+    commands:
+      tool:
+        profiles: [tool-work]
+profiles:
+  tool-work:
+    executable: /bin/tool
+`, root)
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := Load(manifestPath)
+	if err != nil {
+		t.Fatalf("a manifest with a hub key must still parse: %v", err)
+	}
+	if config.Hub != "https://hub.example.com" {
+		t.Fatalf("got hub %q, want https://hub.example.com", config.Hub)
+	}
+
+	// A manifest without the key stays valid, because a machine may use the
+	// gate without any hub.
+	if _, err := Load(writeManifestWithoutHub(t, root)); err != nil {
+		t.Fatalf("a manifest with no hub key must still parse: %v", err)
+	}
+}
+
+func writeManifestWithoutHub(t *testing.T, root string) string {
+	t.Helper()
+	manifestPath := filepath.Join(t.TempDir(), "jackfield.yaml")
+	manifest := fmt.Sprintf(`version: 1
+workspaces:
+  work:
+    roots: [%q]
+    commands:
+      tool:
+        profiles: [tool-work]
+profiles:
+  tool-work:
+    executable: /bin/tool
+`, root)
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return manifestPath
+}

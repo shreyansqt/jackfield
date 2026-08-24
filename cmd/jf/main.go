@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -52,7 +53,19 @@ func run(args []string) error {
 		return err
 	}
 	if global.NArg() == 0 {
-		return fmt.Errorf("use jf [--config PATH] run|resolve [--profile NAME] COMMAND [ARGS]")
+		return fmt.Errorf("use jf [--config PATH] run|resolve|login|status|devices|creds|auth [ARGS]")
+	}
+
+	action := global.Arg(0)
+	actionArgs := global.Args()[1:]
+
+	// The hub commands run without a manifest. `jf login` is the first command a
+	// fresh machine runs, before any jackfield.yaml exists there, so a missing
+	// manifest must not stop it. A manifest that is present is still read, for
+	// its hub: key.
+	if isHubAction(action) {
+		manifestPath, _ := findConfig(*configPath)
+		return runHubAction(context.Background(), defaultHubEnvironment(manifestPath), action, actionArgs)
 	}
 
 	manifestPath, err := findConfig(*configPath)
@@ -68,8 +81,6 @@ func run(args []string) error {
 		return fmt.Errorf("read working directory: %w", err)
 	}
 
-	action := global.Arg(0)
-	actionArgs := global.Args()[1:]
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	requestedProfile := flags.String("profile", "", "Select one allowed profile")

@@ -14,6 +14,13 @@ type Config struct {
 	Version    int                  `yaml:"version"`
 	Workspaces map[string]Workspace `yaml:"workspaces"`
 	Profiles   map[string]Profile   `yaml:"profiles"`
+
+	// Hub is the address of the jackfield hub, for example
+	// "https://hub.example.com". The runner itself does not use it; internal/hub
+	// reads it. The field exists here because this decoder sets
+	// KnownFields(true), so a manifest with a hub key would otherwise fail to
+	// parse and stop every `jf run` command.
+	Hub string `yaml:"hub,omitempty"`
 }
 
 type Workspace struct {

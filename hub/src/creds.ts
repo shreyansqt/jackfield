@@ -14,7 +14,7 @@
  */
 import type { Env } from "./env.js";
 import { authenticateDevice, authenticateHuman } from "./auth.js";
-import { json } from "./http.js";
+import { escapeHtml, html, json, page } from "./http.js";
 import {
   consumeApproval,
   createApproval,
@@ -137,15 +137,69 @@ export async function handlePutCredential(
 }
 
 /**
+ * GET /approvals?connection=<name> — the page where a person approves a write.
+ *
+ * `jf auth <connection>` opens this in a browser. The person sees which
+ * connection is about to be written, and approves or closes the tab.
+ *
+ * The secret never passes through the browser. The browser only produces the
+ * ticket; `jf` then sends the secret straight to the hub.
+ */
+export async function handleApprovalPage(request: Request, env: Env): Promise<Response> {
+  const human = await authenticateHuman(request, env);
+  if (!human) return approvalSignInRequired(env);
+
+  const connection = new URL(request.url).searchParams.get("connection");
+  if (!connection) {
+    return html(
+      page(
+        "Approve a credential write",
+        `<h1>Approve a credential write</h1>
+<p>Name the connection you want to write.</p>
+<form method="get" action="/approvals">
+  <label for="connection">Connection</label>
+  <input type="text" id="connection" name="connection" autocomplete="off"
+         placeholder="slack-work" required>
+  <p><button type="submit">Continue</button></p>
+</form>`,
+      ),
+    );
+  }
+
+  return html(
+    page(
+      "Approve a credential write",
+      `<h1>Approve this write?</h1>
+<p>This stores a new credential for
+<strong>${escapeHtml(connection)}</strong>, as
+<strong>${escapeHtml(human.identity)}</strong>.</p>
+<p>The approval lasts five minutes and covers this one connection. It permits
+one write, and nothing else.</p>
+<form method="post" action="/approvals">
+  <input type="hidden" name="connection" value="${escapeHtml(connection)}">
+  <p><button type="submit">Approve this write</button></p>
+</form>
+<p class="warn">Approve this only if you started <code>jf auth</code> yourself.</p>`,
+    ),
+  );
+}
+
+/**
  * POST /approvals — a human in a browser approves one credential write.
  *
- * The ticket this returns is short-lived and covers exactly one connection.
- * `jf auth` opens this in a browser, collects the ticket, and then sends the
- * PUT. The secret itself never passes through the browser.
+ * The ticket is short-lived and covers exactly one connection.
+ *
+ * This answers in two shapes, because it has two callers. A form submission
+ * from the approval page gets an HTML page that shows the ticket as text a
+ * person can copy. Everything else gets the JSON that `jf` and curl parse.
+ * The JSON shape is the original contract and it did not change.
  */
 export async function handleCreateApproval(request: Request, env: Env): Promise<Response> {
+  const wantsHtml = prefersHtml(request);
+
   const human = await authenticateHuman(request, env);
   if (!human) {
+    if (wantsHtml) return approvalSignInRequired(env);
     return json(
       {
         error: "unauthorized",
@@ -156,15 +210,90 @@ export async function handleCreateApproval(request: Request, env: Env): Promise<
     );
   }
 
-  const body = (await request.json().catch(() => null)) as { connection?: unknown } | null;
-  if (!body || typeof body.connection !== "string" || body.connection.length === 0) {
+  const connection = await readConnection(request);
+  if (!connection) {
+    if (wantsHtml) {
+      return html(
+        page(
+          "Missing connection",
+          `<h1>Missing connection</h1><p>No connection was named.</p>`,
+        ),
+        400,
+      );
+    }
     return json({ error: "invalid_request", error_description: "connection is required" }, 400);
   }
 
-  const ticket = await createApproval(env.HUB_KV, body.connection, human.identity);
-  return json({ approval_ticket: ticket, connection: body.connection }, 200, {
+  const ticket = await createApproval(env.HUB_KV, connection, human.identity);
+
+  if (wantsHtml) {
+    return html(
+      page(
+        "Write approved",
+        `<h1>Write approved</h1>
+<p>Copy this ticket back into <code>jf auth</code>:</p>
+<p><span class="code">${escapeHtml(ticket)}</span></p>
+<p>It works once, for <strong>${escapeHtml(connection)}</strong> only, for five
+minutes.</p>`,
+      ),
+      200,
+      { "Cache-Control": "no-store" },
+    );
+  }
+
+  return json({ approval_ticket: ticket, connection }, 200, {
     "Cache-Control": "no-store",
   });
+}
+
+/**
+ * True when the caller is a browser rather than a script.
+ *
+ * A form submission sends `Accept: text/html` and a form content type. `jf`
+ * and curl send neither, so they keep receiving JSON.
+ */
+function prefersHtml(request: Request): boolean {
+  const accept = request.headers.get("Accept") ?? "";
+  if (accept.includes("text/html")) return true;
+  const contentType = request.headers.get("Content-Type") ?? "";
+  return contentType.includes("application/x-www-form-urlencoded");
+}
+
+/** Reads the connection name from a JSON body, a form body, or the query. */
+async function readConnection(request: Request): Promise<string | null> {
+  const contentType = request.headers.get("Content-Type") ?? "";
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const form = await request.formData();
+    const value = form.get("connection");
+    return typeof value === "string" && value.length > 0 ? value : null;
+  }
+
+  const body = (await request.json().catch(() => null)) as { connection?: unknown } | null;
+  if (body && typeof body.connection === "string" && body.connection.length > 0) {
+    return body.connection;
+  }
+
+  const fromQuery = new URL(request.url).searchParams.get("connection");
+  return fromQuery && fromQuery.length > 0 ? fromQuery : null;
+}
+
+/** The page shown when the approval pages do not know who the caller is. */
+function approvalSignInRequired(env: Env): Response {
+  return html(
+    page(
+      "Sign in required",
+      env.ACCESS_ENABLED === "true"
+        ? `<h1>Sign in required</h1>
+<p>Cloudflare Access did not identify you. Open this page again through your
+Access sign-in.</p>`
+        : `<h1>Sign in required</h1>
+<p>Cloudflare Access is not configured on this hub yet.</p>
+<p>Until it is, add <code>?dev_token=...</code> to the URL.</p>
+<p class="warn">Configure Access before you store a real credential.</p>`,
+    ),
+    401,
+  );
 }
 
 /**

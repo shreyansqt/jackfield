@@ -28,6 +28,7 @@ import type { Env } from "./env.js";
 import { authenticateHuman } from "./auth.js";
 import { html, json, page } from "./http.js";
 import {
+  handleApprovalPage,
   handleCreateApproval,
   handleGetCredential,
   handleHeadCredential,
@@ -74,8 +75,12 @@ const hubHandler: ExportedHandler<Env> = {
 
       /* ---------------- credential writes need approval ---------------- */
 
-      if (path === "/approvals" && method === "POST") {
-        return await handleCreateApproval(request, env);
+      if (path === "/approvals") {
+        // GET shows the approval page a person uses. POST mints the ticket,
+        // for both that page's form and the `jf` client.
+        if (method === "GET") return await handleApprovalPage(request, env);
+        if (method === "POST") return await handleCreateApproval(request, env);
+        return json({ error: "method_not_allowed" }, 405, { Allow: "GET, POST" });
       }
 
       /* ---------------- the credential API ---------------- */
