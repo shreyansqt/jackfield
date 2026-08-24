@@ -17,13 +17,13 @@
   // device tokens, device-authorization requests and write-approval tickets.
   // Create both namespaces before the first deploy. See README.md.
   "kv_namespaces": [
-    { "binding": "OAUTH_KV", "id": "<OAUTH_KV_NAMESPACE_ID>" },
-    { "binding": "HUB_KV", "id": "<HUB_KV_NAMESPACE_ID>" }
+    { "binding": "OAUTH_KV", "id": "329a96408d644d619cc4253ec726c05a" },
+    { "binding": "HUB_KV", "id": "b0cb8e8333e74429820a23709ed2170e" }
   ],
 
   "vars": {
     // The hub's own public origin. The device flow prints this to the user.
-    "HUB_ORIGIN": "https://jackfield-hub.example.workers.dev",
+    "HUB_ORIGIN": "https://jackfield-hub.hi-0c6.workers.dev",
 
     // Cloudflare Access. Set ACCESS_ENABLED to "true" and fill in both values
     // below once you have an Access application for this hub. The hub then

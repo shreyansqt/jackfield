@@ -16,6 +16,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:
 import { describe, expect, it } from "vitest";
 
 import worker from "../src/index.js";
+import type { Env } from "../src/env.js";
 
 const ORIGIN = "https://hub.test";
 const DEV_TOKEN = "test-dev-signin-token";
@@ -515,6 +516,197 @@ describe("the browser approval page", () => {
       }),
     );
     expect(response.status).toBe(401);
+  });
+});
+
+describe("the development sign-in survives a form submission", () => {
+  // The live bug: the dev token travels as ?dev_token= in the URL, and a form
+  // submission does not inherit the query string. The POST therefore arrived
+  // with no identity, the approval was refused, and the devauth record stayed
+  // at approved: false. Each test below covers one half of the fix.
+
+  it("approves a device when the token is only in the form body", async () => {
+    const startResponse = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "form-body-machine" }),
+      }),
+    );
+    const start = (await startResponse.json()) as { device_code: string; user_code: string };
+
+    // No dev_token in the URL. It is in the body, where the page put it.
+    const approveResponse = await call(
+      new Request(`${ORIGIN}/device/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          user_code: start.user_code,
+          device_name: "form-body-machine",
+          dev_token: DEV_TOKEN,
+        }).toString(),
+      }),
+    );
+    expect(approveResponse.status).toBe(200);
+
+    // The approval must have persisted, which is what the live bug broke.
+    const tokenResponse = await call(
+      new Request(`${ORIGIN}/device/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: start.device_code,
+        }),
+      }),
+    );
+    expect(tokenResponse.status).toBe(200);
+    expect(((await tokenResponse.json()) as { access_token: string }).access_token).toMatch(/^jfd_/);
+  });
+
+  it("still refuses a device approval with no token anywhere", async () => {
+    const startResponse = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "no-token-machine" }),
+      }),
+    );
+    const start = (await startResponse.json()) as { device_code: string; user_code: string };
+
+    const approveResponse = await call(
+      new Request(`${ORIGIN}/device/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ user_code: start.user_code }).toString(),
+      }),
+    );
+    expect(approveResponse.status).toBe(401);
+
+    // And no token may be collectable afterwards.
+    const tokenResponse = await call(
+      new Request(`${ORIGIN}/device/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: start.device_code,
+        }),
+      }),
+    );
+    expect(((await tokenResponse.json()) as { error: string }).error).toBe("authorization_pending");
+  });
+
+  it("refuses a device approval when the form carries a wrong token", async () => {
+    const startResponse = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "wrong-token-machine" }),
+      }),
+    );
+    const start = (await startResponse.json()) as { user_code: string };
+
+    const approveResponse = await call(
+      new Request(`${ORIGIN}/device/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          user_code: start.user_code,
+          dev_token: "not-the-right-token",
+        }).toString(),
+      }),
+    );
+    expect(approveResponse.status).toBe(401);
+  });
+
+  it("mints an approval ticket when the token is only in the form body", async () => {
+    const response = await call(
+      new Request(`${ORIGIN}/approvals`, {
+        method: "POST",
+        headers: {
+          Accept: "text/html",
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          connection: "slack-form-token",
+          dev_token: DEV_TOKEN,
+        }).toString(),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const shown = await response.text();
+    expect(shown).toContain("Write approved");
+  });
+
+  it("puts the hidden field in the device page while Access is off", async () => {
+    const startResponse = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "hidden-field-machine" }),
+      }),
+    );
+    const start = (await startResponse.json()) as { user_code: string };
+
+    const pageResponse = await call(
+      new Request(
+        `${ORIGIN}/device?user_code=${encodeURIComponent(start.user_code)}&dev_token=${DEV_TOKEN}`,
+        { headers: { Accept: "text/html" } },
+      ),
+    );
+    expect(pageResponse.status).toBe(200);
+    const body = await pageResponse.text();
+    expect(body).toContain(`name="dev_token"`);
+    expect(body).toContain(DEV_TOKEN);
+  });
+
+  it("never puts the hidden field in a page once Access is on", async () => {
+    // With Access on, the development sign-in does not exist, so the shared
+    // secret must not appear in any rendered page. A signed-in Access request
+    // is simulated by the verified-identity path in access.spec.ts; here the
+    // point is only that nothing echoes a dev_token back into the HTML.
+    const accessEnv: Env = {
+      ...env,
+      ACCESS_ENABLED: "true",
+      ACCESS_TEAM_DOMAIN: "jackfield.cloudflareaccess.com",
+      ACCESS_AUD: "test-audience",
+      DEV_SIGNIN_TOKEN: undefined,
+    };
+
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request(`${ORIGIN}/approvals?connection=slack-access&dev_token=${DEV_TOKEN}`, {
+        headers: { Accept: "text/html" },
+      }),
+      accessEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    // Access refuses the request outright, and the body carries no token.
+    expect(response.status).toBe(401);
+    const body = await response.text();
+    expect(body).not.toContain(`name="dev_token"`);
+    expect(body).not.toContain(DEV_TOKEN);
+  });
+
+  it("puts the hidden field in both approval forms while Access is off", async () => {
+    const withConnection = await call(
+      new Request(`${ORIGIN}/approvals?connection=slack-hidden&dev_token=${DEV_TOKEN}`, {
+        headers: { Accept: "text/html" },
+      }),
+    );
+    expect((await withConnection.text())).toContain(`name="dev_token"`);
+
+    // The GET form needs it too: a GET submission replaces the query string.
+    const withoutConnection = await call(
+      new Request(`${ORIGIN}/approvals?dev_token=${DEV_TOKEN}`, {
+        headers: { Accept: "text/html" },
+      }),
+    );
+    expect((await withoutConnection.text())).toContain(`name="dev_token"`);
   });
 });
 

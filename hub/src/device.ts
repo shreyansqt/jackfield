@@ -19,8 +19,8 @@
  *      token on its next poll. The request record is then deleted.
  */
 import type { Env } from "./env.js";
-import { authenticateHuman } from "./auth.js";
-import { escapeHtml, html, json, oauthError, page } from "./http.js";
+import { authenticateHuman, presentedDevToken } from "./auth.js";
+import { devTokenField, escapeHtml, html, json, oauthError, page } from "./http.js";
 import {
   approveDeviceAuth,
   consumeDeviceAuth,
@@ -113,6 +113,8 @@ export async function handleDevicePage(request: Request, env: Env): Promise<Resp
   const human = await authenticateHuman(request, env);
   if (!human) return signInRequired(env);
 
+  const carry = devTokenField(presentedDevToken(request, env));
+
   const userCode = new URL(request.url).searchParams.get("user_code");
   if (!userCode) {
     return html(
@@ -120,7 +122,7 @@ export async function handleDevicePage(request: Request, env: Env): Promise<Resp
         "Approve a device",
         `<h1>Approve a device</h1>
 <p>Type the code shown on the machine you are signing in.</p>
-<form method="post" action="/device/approve">
+<form method="post" action="/device/approve">${carry}
   <label for="user_code">Device code</label>
   <input type="text" id="user_code" name="user_code" autocomplete="off"
          autocapitalize="characters" placeholder="BCDF-GHJK" required>
@@ -152,7 +154,7 @@ machine to get a new code.</p>`,
 <p>It named itself <strong>${escapeHtml(record.requestedName)}</strong>. You can
 change the name before you approve. The name is what
 <code>jf devices</code> shows.</p>
-<form method="post" action="/device/approve">
+<form method="post" action="/device/approve">${carry}
   <input type="hidden" name="user_code" value="${escapeHtml(record.userCode)}">
   <label for="device_name">Device name</label>
   <input type="text" id="device_name" name="device_name"
@@ -165,12 +167,20 @@ token can read every credential in this hub.</p>`,
   );
 }
 
-/** POST /device/approve — the person approves, and the hub mints the token. */
+/**
+ * POST /device/approve — the person approves, and the hub mints the token.
+ *
+ * The form is read BEFORE the identity check, because a request body can be
+ * read only once and the development sign-in token may arrive inside it. The
+ * page puts it there, since a form submission does not carry the query string
+ * the browser was opened with.
+ */
 export async function handleDeviceApprove(request: Request, env: Env): Promise<Response> {
-  const human = await authenticateHuman(request, env);
+  const form = await readForm(request);
+
+  const human = await authenticateHuman(request, env, form.get("dev_token"));
   if (!human) return signInRequired(env);
 
-  const form = await readForm(request);
   const userCode = (form.get("user_code") ?? "").trim();
   if (!userCode) {
     return html(page("Missing code", `<h1>Missing code</h1><p>No device code was given.</p>`), 400);

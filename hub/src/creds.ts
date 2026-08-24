@@ -13,8 +13,8 @@
  * can afford to be expensive.
  */
 import type { Env } from "./env.js";
-import { authenticateDevice, authenticateHuman } from "./auth.js";
-import { escapeHtml, html, json, page } from "./http.js";
+import { authenticateDevice, authenticateHuman, presentedDevToken } from "./auth.js";
+import { devTokenField, escapeHtml, html, json, page } from "./http.js";
 import {
   consumeApproval,
   createApproval,
@@ -149,6 +149,10 @@ export async function handleApprovalPage(request: Request, env: Env): Promise<Re
   const human = await authenticateHuman(request, env);
   if (!human) return approvalSignInRequired(env);
 
+  // A GET form replaces the whole query string, so this form loses the token
+  // it was opened with unless the field carries it too.
+  const carry = devTokenField(presentedDevToken(request, env));
+
   const connection = new URL(request.url).searchParams.get("connection");
   if (!connection) {
     return html(
@@ -156,7 +160,7 @@ export async function handleApprovalPage(request: Request, env: Env): Promise<Re
         "Approve a credential write",
         `<h1>Approve a credential write</h1>
 <p>Name the connection you want to write.</p>
-<form method="get" action="/approvals">
+<form method="get" action="/approvals">${carry}
   <label for="connection">Connection</label>
   <input type="text" id="connection" name="connection" autocomplete="off"
          placeholder="slack-work" required>
@@ -175,7 +179,7 @@ export async function handleApprovalPage(request: Request, env: Env): Promise<Re
 <strong>${escapeHtml(human.identity)}</strong>.</p>
 <p>The approval lasts five minutes and covers this one connection. It permits
 one write, and nothing else.</p>
-<form method="post" action="/approvals">
+<form method="post" action="/approvals">${carry}
   <input type="hidden" name="connection" value="${escapeHtml(connection)}">
   <p><button type="submit">Approve this write</button></p>
 </form>
@@ -197,7 +201,12 @@ one write, and nothing else.</p>
 export async function handleCreateApproval(request: Request, env: Env): Promise<Response> {
   const wantsHtml = prefersHtml(request);
 
-  const human = await authenticateHuman(request, env);
+  // The body is parsed BEFORE the identity check, because it can be read only
+  // once and the development sign-in token may be inside it. The approval page
+  // puts it there, since a form submission drops the query string.
+  const submitted = await readSubmission(request);
+
+  const human = await authenticateHuman(request, env, submitted.devToken);
   if (!human) {
     if (wantsHtml) return approvalSignInRequired(env);
     return json(
@@ -210,7 +219,7 @@ export async function handleCreateApproval(request: Request, env: Env): Promise<
     );
   }
 
-  const connection = await readConnection(request);
+  const connection = submitted.connection;
   if (!connection) {
     if (wantsHtml) {
       return html(
@@ -259,23 +268,41 @@ function prefersHtml(request: Request): boolean {
   return contentType.includes("application/x-www-form-urlencoded");
 }
 
-/** Reads the connection name from a JSON body, a form body, or the query. */
-async function readConnection(request: Request): Promise<string | null> {
+/** What a POST to /approvals carried, from one read of the body. */
+interface ApprovalSubmission {
+  connection: string | null;
+  /** The development sign-in token, when a form body carried it. */
+  devToken: string | null;
+}
+
+/**
+ * Reads the submission from a JSON body, a form body, or the query string.
+ *
+ * This reads the body exactly once and returns everything the caller needs
+ * from it. A second read would throw, and the identity check and the
+ * connection lookup both need a value from it.
+ */
+async function readSubmission(request: Request): Promise<ApprovalSubmission> {
+  const query = new URL(request.url).searchParams;
+  const fromQuery = query.get("connection");
   const contentType = request.headers.get("Content-Type") ?? "";
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
-    const form = await request.formData();
-    const value = form.get("connection");
-    return typeof value === "string" && value.length > 0 ? value : null;
+    const form = await request.formData().catch(() => null);
+    const connection = form?.get("connection");
+    const devToken = form?.get("dev_token");
+    return {
+      connection: typeof connection === "string" && connection.length > 0 ? connection : fromQuery,
+      devToken: typeof devToken === "string" && devToken.length > 0 ? devToken : null,
+    };
   }
 
   const body = (await request.json().catch(() => null)) as { connection?: unknown } | null;
   if (body && typeof body.connection === "string" && body.connection.length > 0) {
-    return body.connection;
+    return { connection: body.connection, devToken: null };
   }
 
-  const fromQuery = new URL(request.url).searchParams.get("connection");
-  return fromQuery && fromQuery.length > 0 ? fromQuery : null;
+  return { connection: fromQuery && fromQuery.length > 0 ? fromQuery : null, devToken: null };
 }
 
 /** The page shown when the approval pages do not know who the caller is. */

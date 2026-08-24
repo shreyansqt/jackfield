@@ -113,6 +113,7 @@ export async function authenticateDevice(
 export async function authenticateHuman(
   request: Request,
   env: Env,
+  extraToken?: string | null,
 ): Promise<HumanCaller | null> {
   if (env.ACCESS_ENABLED === "true") {
     const assertion =
@@ -129,8 +130,28 @@ export async function authenticateHuman(
 
   const expected = env.DEV_SIGNIN_TOKEN;
   if (!expected) return null;
-  const presented = bearerToken(request) ?? new URL(request.url).searchParams.get("dev_token");
+  const presented = presentedDevToken(request, env) ?? extraToken;
   if (!presented) return null;
   if (!(await timingSafeEqualStrings(presented, expected))) return null;
   return { kind: "human", identity: "development-signin", viaAccess: false };
+}
+
+/**
+ * Returns the development sign-in token a request carries, or null.
+ *
+ * A page uses this to re-embed the token in the forms it renders. A browser
+ * carries the token in the URL, and a form submission does not inherit the
+ * query string, so without the hidden field the POST arrives with no identity
+ * at all.
+ *
+ * This reads only the bearer header and the query string. The form body is not
+ * read here, because a body can be read once and the POST handlers need it.
+ * They pass what they parsed to `authenticateHuman` as `extraToken` instead.
+ *
+ * This has no meaning once Access is on. It returns null in that case, so a
+ * page never embeds anything.
+ */
+export function presentedDevToken(request: Request, env: Env): string | null {
+  if (env.ACCESS_ENABLED === "true") return null;
+  return bearerToken(request) ?? new URL(request.url).searchParams.get("dev_token");
 }

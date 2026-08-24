@@ -255,6 +255,20 @@ Access is configured. It is not a substitute for Access, and the sign-in page
 says so. Once `ACCESS_ENABLED` is `"true"`, the Access branch never reads that
 secret, so leaving it set does not reopen the path.
 
+The development token travels in the URL, and a form submission does not
+inherit the query string. The approval pages therefore re-embed it as a hidden
+`dev_token` field, and the POST handlers read the form before they check the
+identity, because a request body can be read only once. This does put the
+shared development secret into the HTML of a page that the same secret already
+unlocked, which reveals it to nobody who could not already see it. The field is
+never rendered once Access is on: `presentedDevToken` returns null in that
+case, and a test asserts the token appears in no page then.
+
+A live deployment found this the hard way. Before the fix, every browser
+approval failed: the POST arrived unauthenticated, the page rendered a 401, and
+the device-authorization record stayed at `approved: false` while the machine
+polled forever.
+
 ## 7. The token format leaves room for a workspace-locked grant
 
 Issue #9 section 6 asked only for room, not for the feature.

@@ -25,6 +25,24 @@ export function html(body: string, status = 200, headers: HeadersInit = {}): Res
   });
 }
 
+/**
+ * Returns a hidden form field that carries the development sign-in token, or
+ * an empty string when there is nothing to carry.
+ *
+ * A browser holds the token in the URL. A form submission does not inherit the
+ * query string, so without this field the POST arrives with no identity and
+ * the approval is refused. Re-embedding it keeps the development flow usable.
+ *
+ * This puts the shared development secret into the HTML of a page that the
+ * same secret already unlocked, so it reveals nothing to a reader who could
+ * not already see it. It returns an empty string once Access is on, so the
+ * field never appears in a real deployment. DESIGN.md section 6 records this.
+ */
+export function devTokenField(token: string | null): string {
+  if (!token) return "";
+  return `\n  <input type="hidden" name="dev_token" value="${escapeHtml(token)}">`;
+}
+
 /** Escapes text for safe inclusion in HTML. */
 export function escapeHtml(text: string): string {
   return text
