@@ -141,11 +141,10 @@ const hubHandler: ExportedHandler<Env> = {
 /**
  * GET /authorize — the browser consent page for the OAuth front.
  *
- * PHASE 1 SEAM. This is where Cloudflare Access will sit. `authenticateHuman`
- * already reads the Access headers when ACCESS_ENABLED is "true", and falls
- * back to the development sign-in when it is not. Access itself is configured
- * in the Cloudflare dashboard, in front of this path. See README.md and the
- * warning in src/auth.ts about what the header check does and does not prove.
+ * `authenticateHuman` verifies the Cloudflare Access token when ACCESS_ENABLED
+ * is "true", and falls back to the development sign-in when it is not. The
+ * Access application itself is configured in the Cloudflare dashboard, in
+ * front of this path. See README.md and src/access.ts.
  *
  * The page grants the full scope, because the hub has exactly one user: the
  * person who deployed it. A per-scope consent screen would be theatre here.

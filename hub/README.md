@@ -162,7 +162,10 @@ Do this before you store a real credential.
    `/approvals`.
 4. Add Google as the identity provider, and write a policy that allows only
    your own email address.
-5. Copy the application audience tag and your team domain.
+5. Copy two values from the application:
+   - the **Application Audience (AUD) tag**, on the application's overview;
+   - your **team domain**, on the Zero Trust settings page. It looks like
+     `yourteam.cloudflareaccess.com`.
 
 Then set the three variables in `wrangler.jsonc` and deploy:
 
@@ -180,13 +183,29 @@ npx wrangler deploy
 npx wrangler secret delete DEV_SIGNIN_TOKEN
 ```
 
-**Read this before you rely on it.** The hub reads the identity headers that
-Access sets. It does not yet verify the Access token's signature. Access must
-therefore really sit in front of every request that reaches the Worker. If your
-Worker also answers on its `workers.dev` address, somebody can call it directly
-and send those headers themselves. Put the hub on a hostname that Access
-protects, and turn off the `workers.dev` route. `DESIGN.md` section 6 explains
-what is still missing.
+Both values are required. If either is empty or wrong, the hub refuses every
+browser sign-in, so a typo shows up as a 401 rather than as an open door.
+
+### What the hub verifies
+
+Once `ACCESS_ENABLED` is `"true"`, the hub verifies the Access token itself on
+every browser request. It checks that:
+
+- the token is signed by your Access team's published keys, fetched from
+  `https://YOUR-TEAM.cloudflareaccess.com/cdn-cgi/access/certs`;
+- its `aud` matches your `ACCESS_AUD`, so a token for one of your other Access
+  applications does not open this one;
+- its issuer matches your team domain;
+- it has not expired and is not postdated.
+
+**Your identity comes from the verified token, not from a header.** The
+`Cf-Access-Authenticated-User-Email` header is ignored. Somebody who reaches the
+Worker directly and sends that header is refused.
+
+Keep Access in front of the hub anyway. It turns unauthenticated traffic away
+before it reaches your Worker. The difference is that the hub is now safe if a
+request gets past it — including on the `workers.dev` address — instead of
+depending on that never happening. `DESIGN.md` section 6 records the details.
 
 ## Using the hub
 
@@ -280,4 +299,6 @@ runtime with local KV namespaces.
 - `/status` does not probe the upstream services.
 - The `jf` command-line tool does not call the hub yet.
 - There is no tool to rotate the master encryption key.
-- The Access token signature is not verified. See step 6.
+- The hub applies no Access policy of its own. It verifies who you are and that
+  the token was minted for this application. Who may sign in is decided by the
+  Access policy you write in the dashboard.

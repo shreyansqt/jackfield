@@ -156,26 +156,92 @@ behind `apiRoute` would make the provider reject every device token before the
 route handler ran. Phase 2 puts the MCP endpoint behind `apiRoute`, where the
 connector's OAuth access token is the right credential.
 
-## 6. The Cloudflare Access seam
+## 6. Cloudflare Access, and why the header alone was not enough
 
-Access is **not** integrated. The brief asked for a clear seam and a config
-placeholder, not the integration.
+The Access token is now **verified**. `src/access.ts` does the verification and
+`authenticateHuman` in `src/auth.ts` calls it.
 
-`authenticateHuman` in `src/auth.ts` is the seam. With `ACCESS_ENABLED` set to
-`"true"`, it reads the identity from the `Cf-Access-Authenticated-User-Email`
-header and requires `Cf-Access-Jwt-Assertion` to be present.
+### The defect this closes
 
-**What is still missing, stated plainly:** the code does not verify the Access
-JWT signature against the team's public keys, and does not check the `aud`
-claim against `ACCESS_AUD`. Until that lands, the browser path is secure only
-if Access genuinely sits in front of the Worker and the Worker cannot be
-reached by any other route. A Worker also exposed on `workers.dev` can be
-called directly with a forged header. The README says the same thing in the
-deployment steps.
+The earlier code read the identity from the `Cf-Access-Authenticated-User-Email`
+header and only checked that `Cf-Access-Jwt-Assertion` was present. Access sets
+both headers, but so can anybody else. A request that reaches the Worker
+without passing through Access — over the `workers.dev` hostname, for example —
+carried whatever headers its sender chose. Sending
+`Cf-Access-Authenticated-User-Email: someone@example.com` and any non-empty
+assertion was enough to be treated as the signed-in owner, which is enough to
+mint an approval ticket and write a credential.
 
-Until Access is configured, the hub uses a development sign-in: a single shared
-secret in `DEV_SIGNIN_TOKEN`. It exists so the flows can be exercised and
-tested. It is not a substitute for Access, and the sign-in page says so.
+The correctness of the browser path therefore rested on a deployment property:
+that no route to the Worker bypasses Access. That property is easy to lose and
+gives no signal when it is lost.
+
+### What is checked now
+
+`verifyAccessToken` refuses the token unless every one of these holds:
+
+1. The token has three base64url segments.
+2. The header names `alg: "RS256"` and carries a `kid`. `none` and the `HS*`
+   family are refused before any key is loaded, so a caller cannot pick the
+   algorithm and supply its key.
+3. The `kid` appears in the team's JWKS at
+   `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`.
+4. The RSASSA-PKCS1-v1_5 signature verifies over `<header>.<payload>`.
+5. `aud` contains `ACCESS_AUD`, so a token minted for another Access
+   application in the same team does not open this one.
+6. `iss` equals `https://<team domain>`.
+7. `exp` is in the future, and `nbf`/`iat` are not in the future. A 60-second
+   clock skew allowance applies to all three.
+
+**The identity comes from the verified `email` claim.** The
+`Cf-Access-Authenticated-User-Email` header is now read nowhere in the hub. A
+service token has no email, so `sub` stands in for it.
+
+The token is read from the `Cf-Access-Jwt-Assertion` header, and from the
+`CF_Authorization` cookie when that header is absent. The cookie value is the
+same JWT and goes through the same verification, so accepting it adds no trust.
+
+Access in front of the Worker is still the right configuration — it stops
+unauthenticated traffic before it costs a request — but the hub no longer
+depends on it for correctness.
+
+### No JWT dependency
+
+The verification is written against WebCrypto. Access signs with RS256 only, so
+the work is one `crypto.subtle.verify` call plus the claim checks above. A JWT
+library would add a dependency and an algorithm-negotiation surface to save
+about forty lines.
+
+### The JWKS caching choice
+
+**In-memory, per isolate, one-hour TTL, keyed by team domain.** It is a plain
+module-level `Map` in `src/access.ts`. It lives as long as the isolate and dies
+with it.
+
+- **Not KV.** A KV read costs about what the JWKS fetch it replaces costs, and
+  it would put a shared, writable copy of the trust anchor into storage.
+- **One hour, not longer.** Access rotates its signing keys roughly every six
+  weeks and publishes each new key before it signs with it, so an hour sits far
+  inside the window.
+- **An unknown `kid` forces one refetch**, so a rotation takes effect at once
+  rather than at the end of the TTL. This is also a way for a caller to make
+  the hub fetch: a token with a random `kid` causes one subrequest to a
+  Cloudflare-hosted endpoint. That reveals nothing and the request still ends
+  in a 401.
+- **The cost:** a cold isolate pays one JWKS fetch on its first Access request,
+  and each isolate keeps its own copy. Both are acceptable for a hub with one
+  user and rare browser traffic.
+
+A JWKS fetch that fails or answers with an error refuses the caller. The hub
+fails closed.
+
+### The development sign-in
+
+When `ACCESS_ENABLED` is not `"true"`, the hub uses a single shared secret in
+`DEV_SIGNIN_TOKEN`. It exists so the flows can be exercised and tested before
+Access is configured. It is not a substitute for Access, and the sign-in page
+says so. Once `ACCESS_ENABLED` is `"true"`, the Access branch never reads that
+secret, so leaving it set does not reopen the path.
 
 ## 7. The token format leaves room for a workspace-locked grant
 
@@ -203,4 +269,7 @@ Nothing about the current format has to change to allow that. It is not built.
 - **No `jf` client changes.** The hub serves the endpoints; the Go CLI is not
   wired to them yet.
 - **No master key rotation tool.** See section 1.
-- **No Access JWT verification.** See section 6.
+- **No Access group or policy checks.** The hub verifies who the caller is, and
+  that the token was minted for this application. It does not read the `groups`
+  claim or apply any policy of its own. The Access policy in the dashboard is
+  what decides who may sign in, and the hub has one user.

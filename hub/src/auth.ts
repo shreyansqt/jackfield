@@ -12,6 +12,7 @@
  * and the route handlers call into it. See DESIGN.md.
  */
 import type { Env } from "./env.js";
+import { verifyAccessToken } from "./access.js";
 import { timingSafeEqualStrings } from "./crypto.js";
 import { lookupDeviceByToken, touchDevice, type DeviceRecord } from "./storage.js";
 
@@ -33,6 +34,28 @@ export interface HumanCaller {
 }
 
 export type Caller = DeviceCaller | HumanCaller;
+
+/**
+ * Reads the Access token out of the `CF_Authorization` cookie.
+ *
+ * Access sets both the header and this cookie. The header is the normal path.
+ * The cookie is the fallback for a request that reaches the Worker without it,
+ * which happens on a browser navigation the edge did not re-decorate. The
+ * cookie value is a JWT and is verified exactly like the header value, so
+ * accepting it adds no trust.
+ */
+function readAccessCookie(request: Request): string | null {
+  const cookies = request.headers.get("Cookie");
+  if (!cookies) return null;
+  for (const part of cookies.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0) continue;
+    if (part.slice(0, separator).trim() !== "CF_Authorization") continue;
+    const value = part.slice(separator + 1).trim();
+    return value || null;
+  }
+  return null;
+}
 
 /** Pulls the bearer token out of an Authorization header. */
 export function bearerToken(request: Request): string | null {
@@ -68,21 +91,19 @@ export async function authenticateDevice(
 /**
  * Authenticates a person in a browser.
  *
- * PHASE 1 SEAM — Cloudflare Access is not integrated yet.
+ * When ACCESS_ENABLED is "true", the caller must present a
+ * `Cf-Access-Jwt-Assertion` that verifies against the Access team's published
+ * signing keys, carries ACCESS_AUD in its `aud`, and is inside its validity
+ * window. `src/access.ts` performs those checks.
  *
- * When ACCESS_ENABLED is "true", the hub reads the identity from the
- * `Cf-Access-Authenticated-User-Email` header that Access sets, and requires
- * the `Cf-Access-Jwt-Assertion` header to be present. Access must be
- * configured to protect these paths in the Cloudflare dashboard, because a
- * header alone proves nothing if the origin is reachable without Access.
+ * The identity is the `email` claim of the verified token. The
+ * `Cf-Access-Authenticated-User-Email` header is ignored, because any caller
+ * that reaches the Worker directly can set it. Verification therefore holds
+ * even on a Worker still reachable on `workers.dev`.
  *
- * THE REMAINING WORK, stated plainly: this function does not yet verify the
- * Access JWT signature against the team's public keys at
- * `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, nor check its
- * `aud` claim against ACCESS_AUD. Until that verification lands, the security
- * of the browser path rests entirely on Access being in front of the Worker
- * and the Worker not being reachable by any other route. Do not treat the
- * header as proof on a Worker that is also exposed on `workers.dev`.
+ * Access in front of the Worker is still the right configuration — it stops
+ * unauthenticated traffic before it costs anything — but the hub no longer
+ * depends on it for correctness.
  *
  * When ACCESS_ENABLED is not "true", the hub runs its development sign-in:
  * the caller must present DEV_SIGNIN_TOKEN. That is a single shared secret and
@@ -94,10 +115,16 @@ export async function authenticateHuman(
   env: Env,
 ): Promise<HumanCaller | null> {
   if (env.ACCESS_ENABLED === "true") {
-    const assertion = request.headers.get("Cf-Access-Jwt-Assertion");
-    const email = request.headers.get("Cf-Access-Authenticated-User-Email");
-    if (!assertion || !email) return null;
-    return { kind: "human", identity: email, viaAccess: true };
+    const assertion =
+      request.headers.get("Cf-Access-Jwt-Assertion") ?? readAccessCookie(request);
+    if (!assertion) return null;
+    const verified = await verifyAccessToken(
+      assertion,
+      env.ACCESS_TEAM_DOMAIN ?? "",
+      env.ACCESS_AUD ?? "",
+    );
+    if (!verified) return null;
+    return { kind: "human", identity: verified.identity, viaAccess: true };
   }
 
   const expected = env.DEV_SIGNIN_TOKEN;

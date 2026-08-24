@@ -25,10 +25,11 @@
     // The hub's own public origin. The device flow prints this to the user.
     "HUB_ORIGIN": "https://jackfield-hub.example.workers.dev",
 
-    // Cloudflare Access placeholder. Access is NOT integrated yet (Phase 1
-    // leaves the seam). When you put Access in front of /authorize, set
-    // ACCESS_ENABLED to "true" and fill in the two values below. The hub then
-    // verifies the Cf-Access-Jwt-Assertion header on browser entry points.
+    // Cloudflare Access. Set ACCESS_ENABLED to "true" and fill in both values
+    // below once you have an Access application for this hub. The hub then
+    // verifies the Cf-Access-Jwt-Assertion signature against the team's keys,
+    // checks aud and expiry, and takes the identity from the verified claims.
+    // Both values are required: an empty one refuses every browser sign-in.
     // Until then the hub uses the development sign-in page and says so.
     "ACCESS_ENABLED": "false",
     "ACCESS_TEAM_DOMAIN": "",
