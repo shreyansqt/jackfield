@@ -7,12 +7,12 @@ input and output terminates in one place. Instead of rewiring gear at the back o
 rack, you go to the panel and patch a short cable: *this source* → *that destination*.
 
 That is what this is, for AI coding agents. Every MCP server, every CLI credential,
-every identity lands in one manifest — and you decide, per workspace, what's patched
-to what.
+every identity lands in one place — and you decide, per workspace, what is patched to
+what.
 
-> **Status: two local pilots.** See [docs/design.md](docs/design.md) for the main
-> design. The repository now contains a shared Slack workspace gate and a `jf run`
-> CLI gate.
+> **Status: architecture decided 2026-08-24. The hub build has not started. Two local
+> pilots are running.** See [docs/design.md](docs/design.md) for the design, and §3.7 for
+> the decision record that made jackfield a hub.
 
 ## The problem
 
@@ -48,28 +48,77 @@ credential stores. Nobody chose. It just resolved.
 
 ## What jackfield does
 
-- **One manifest.** Every MCP server and CLI credential in one place, each tagged with
-  **which identity it acts as** and **which workspaces it belongs to**.
-- **Generates the native config** for Claude Code, Codex, and opencode — so an agent
-  started in a workspace sees exactly that workspace's connections, and nothing else.
-- **CLI credential profiles.** `jf run wrangler` selects the Cloudflare profile from
-  the current workspace. The same rule now covers `gog` and AWS.
-- **Long-lived tokens** where the service offers them, so the daily re-auth chore stops
-  existing.
-- **Replicable.** Set up a new machine, or a headless cloud worker, without
-  re-authenticating twelve servers by hand.
+jackfield is a **hub**: one service that holds your credentials and hands out tools.
+You deploy it yourself, into your own Cloudflare account. Nobody hosts it for you.
+
+- **One place for authentication.** Every credential lives in the hub, tagged with the
+  identity it acts as and the workspaces it belongs to. You authenticate a service once,
+  and every machine sees it on its next call.
+- **Tools over MCP.** The hub serves Slack, Google, and proxies for remote MCP servers
+  (Atlassian, Sentry, Intercom). Every tool name carries its identity — `slack (smarta)`,
+  `gmail (shreyansqt@gmail.com)` — so a model choosing between two Gmails has
+  information instead of a coin flip.
+- **Credentials for CLIs.** `gog`, `wrangler` and `aws` still run on your machine. The
+  `jf` shims fetch the credential from the hub at launch and cache it briefly. The hub
+  is the authority; the machines are caches.
+- **Scoped per workspace, enforced on every call.** An agent inside a workspace
+  directory gets only that workspace's connections. An agent outside every workspace —
+  a coordinator, or claude.ai chat — gets all of them, labelled. AWS always requires you
+  to name staging or production.
+- **No single master key.** A browser login for humans, an account-level connector for
+  Claude surfaces, and a per-device token from `jf login` for machines. Device tokens
+  are listable and revocable one at a time. Reading a credential needs a device token;
+  writing one needs a fresh browser login.
+- **Reachable from a cloud sandbox.** A cloud agent session gets the same tools as your
+  laptop, because it asks the hub rather than reading a local file.
+
+### What it costs
+
+Stated plainly, because these are real:
+
+- The hub is a **single point of failure for tool calls**. If it is down, MCP tools are
+  down on every machine. CLI work keeps going only while the local cache is fresh.
+- **Your secrets live in your own Cloudflare account** — including any client tokens you
+  put there.
+- Every tool call takes **one extra network hop**.
+- **Workspace signals are claimed, not proven.** A client tells the hub where it is
+  running, and the hub believes it. This prevents accidents. It is not a hard boundary
+  against a malicious process on your own machine.
+
+### What stays out of the hub
+
+- **Machine-bound stdio servers.** A service manager controls the machine it runs on.
+- **CLI execution itself.** The command runs where the work is.
+- **claude.ai-native connectors.** Figma stays an Anthropic connector.
 
 ## Current pilots
 
+Both pilots keep running until the hub replaces them. Nothing is torn down before its
+replacement works.
+
 - `jackfield-gate` checks workspace data on every shared MCP tool call. The first
-  profile protects the Smarta Slack server.
+  profile protects the Smarta Slack server. Its findings — MCP roots for Claude Code and
+  OpenCode, the Codex `sandbox-state-meta` signal, and the `tools/list` limitation — go
+  straight into the hub's gate logic. See
+  [docs/workspace-gate-experiment.md](docs/workspace-gate-experiment.md).
 - `jf run` starts an approved CLI with one workspace profile. It removes ambient
   credential variables and rejects command flags that can replace the selected
-  identity.
+  identity. See [docs/cli-gate.md](docs/cli-gate.md).
 
 These gates are local safety controls. A malicious process under the same macOS user
 can bypass them. A hard security boundary needs a trusted launcher or separate system
 users.
+
+## Where it is going
+
+- **Phase 0 — now.** Fix the weekly Google re-authentication, and let `gog auth` run
+  through the CLI gate for its pinned identity.
+- **Phase 1.** Build the hub as a credential store, with the full login door. Exit
+  condition: you authenticate once, and a second machine needs zero action.
+- **Phase 2.** Move the MCP gate into the hub. Slack first, then Google, then the
+  remote-server proxies.
+- **Phase 3.** Add the claude.ai custom connector, then disconnect the claude.ai Google
+  and Slack connectors — which closes the Gmail incident at its source.
 
 ## License
 
