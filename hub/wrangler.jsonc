@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jackfield-hub",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-24",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  // OAUTH_KV holds the OAuth provider's own records: registered clients,
+  // grants, authorization codes and tokens. The library owns this namespace.
+  //
+  // HUB_KV holds everything jackfield writes itself: encrypted credentials,
+  // device tokens, device-authorization requests and write-approval tickets.
+  // Create both namespaces before the first deploy. See README.md.
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "<OAUTH_KV_NAMESPACE_ID>" },
+    { "binding": "HUB_KV", "id": "<HUB_KV_NAMESPACE_ID>" }
+  ],
+
+  "vars": {
+    // The hub's own public origin. The device flow prints this to the user.
+    "HUB_ORIGIN": "https://jackfield-hub.example.workers.dev",
+
+    // Cloudflare Access placeholder. Access is NOT integrated yet (Phase 1
+    // leaves the seam). When you put Access in front of /authorize, set
+    // ACCESS_ENABLED to "true" and fill in the two values below. The hub then
+    // verifies the Cf-Access-Jwt-Assertion header on browser entry points.
+    // Until then the hub uses the development sign-in page and says so.
+    "ACCESS_ENABLED": "false",
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": ""
+  }
+
+  // Secrets, set with `wrangler secret put` (never in this file):
+  //   CRED_MASTER_KEY  - base64 of 32 random bytes. Encrypts every stored
+  //                      credential. Losing it loses every credential.
+  //   DEV_SIGNIN_TOKEN - only used while ACCESS_ENABLED is "false". Stands in
+  //                      for the Access identity on the sign-in page.
+  //
+  // Phase 2 adds the MCP endpoint here: a Durable Object binding plus a
+  // migrations entry for the McpAgent class. See src/index.ts.
+}
