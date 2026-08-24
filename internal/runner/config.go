@@ -28,11 +28,21 @@ type CommandSelection struct {
 }
 
 type Profile struct {
-	Executable string            `yaml:"executable"`
-	PrefixArgs []string          `yaml:"prefix_args,omitempty"`
-	DeniedArgs []string          `yaml:"denied_args,omitempty"`
-	Env        map[string]string `yaml:"env,omitempty"`
-	UnsetEnv   []string          `yaml:"unset_env,omitempty"`
+	Executable  string            `yaml:"executable"`
+	PrefixArgs  []string          `yaml:"prefix_args,omitempty"`
+	DeniedArgs  []string          `yaml:"denied_args,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty"`
+	UnsetEnv    []string          `yaml:"unset_env,omitempty"`
+	Interactive []Interactive     `yaml:"interactive,omitempty"`
+}
+
+// Interactive describes one subcommand that must reach a terminal, for example a
+// browser login. The gate drops DropPrefixArgs from the profile prefix, and it
+// requires that every identity argument equals Identity.
+type Interactive struct {
+	Subcommand     []string `yaml:"subcommand"`
+	DropPrefixArgs []string `yaml:"drop_prefix_args,omitempty"`
+	Identity       string   `yaml:"identity,omitempty"`
 }
 
 type Resolution struct {
@@ -71,6 +81,16 @@ func (config Config) validate() error {
 	for name, profile := range config.Profiles {
 		if strings.TrimSpace(profile.Executable) == "" {
 			return fmt.Errorf("profile %q has no executable", name)
+		}
+		for _, rule := range profile.Interactive {
+			if len(rule.Subcommand) == 0 {
+				return fmt.Errorf("profile %q has an interactive rule without a subcommand", name)
+			}
+			for _, word := range rule.Subcommand {
+				if strings.TrimSpace(word) == "" || strings.HasPrefix(word, "-") {
+					return fmt.Errorf("profile %q interactive rule %q needs plain subcommand words", name, strings.Join(rule.Subcommand, " "))
+				}
+			}
 		}
 	}
 	for workspaceName, workspace := range config.Workspaces {

@@ -31,12 +31,20 @@ profiles:
     prefix_args: [-a, shreyans.jain@smarta-steuern.de, --no-input]
     denied_args: [-a, --account, --access-token, --client, --home]
     unset_env: [GOG_ACCESS_TOKEN, GOG_ACCOUNT, GOG_CLIENT, GOG_HOME]
+    interactive:
+      - subcommand: [auth, add]
+        drop_prefix_args: [--no-input]
+        identity: shreyans.jain@smarta-steuern.de
 
   gog-personal:
     executable: /opt/homebrew/bin/gog
     prefix_args: [-a, shreyansqt@gmail.com, --no-input]
     denied_args: [-a, --account, --access-token, --client, --home]
     unset_env: [GOG_ACCESS_TOKEN, GOG_ACCOUNT, GOG_CLIENT, GOG_HOME]
+    interactive:
+      - subcommand: [auth, add]
+        drop_prefix_args: [--no-input]
+        identity: shreyansqt@gmail.com
 
   wrangler-smarta:
     executable: /Users/shreyans/.local/bin/mise

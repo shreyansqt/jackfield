@@ -66,6 +66,58 @@ A command without a profile must fail instead of silently selecting either accou
 The launcher removes known ambient credential variables. It also rejects flags such as
 `--profile`, `--account`, and `--access-token` after it selects an identity.
 
+## Interactive commands
+
+A profile normally adds `--no-input` so that a command never waits for a person. A
+login command needs the opposite. `gog auth add` must open a browser and wait. Before
+this rule existed, a Google token could only be renewed with the absolute path
+`/opt/homebrew/bin/gog`, which is the bypass the gate exists to prevent.
+
+A profile can now mark some subcommands as interactive:
+
+```yaml
+gog-personal:
+  executable: /opt/homebrew/bin/gog
+  prefix_args: [-a, shreyansqt@gmail.com, --no-input]
+  denied_args: [-a, --account, --access-token, --client, --home]
+  interactive:
+    - subcommand: [auth, add]
+      drop_prefix_args: [--no-input]
+      identity: shreyansqt@gmail.com
+```
+
+Each rule has three parts:
+
+- `subcommand` — the words that select the command. Flags before or between those
+  words do not affect the match, so `gog --verbose auth add` matches `auth add`.
+- `drop_prefix_args` — the prefix arguments to remove for this command. Dropping
+  `--no-input` lets the command prompt and open a browser.
+- `identity` — the account this command may run for.
+
+The identity check reads the account from the positional arguments, because
+`gog auth add` takes the email as an argument rather than a flag. Every word after
+the subcommand must equal the pinned identity:
+
+```sh
+cd ~/workspaces/side-projects
+gog auth add shreyansqt@gmail.com     # allowed; opens a browser
+gog auth add someone@example.com      # denied
+```
+
+The denied-argument list still applies. `gog auth add --account someone@example.com`
+fails, the same as any other command. Commands without a matching rule are unchanged
+and keep `--no-input`, including `gog auth list` and `gog auth remove`.
+
+Only `gog auth add` has a rule today. Two other commands were considered and rejected:
+
+- `gog auth manage` opens a browser manager for every stored account. The identity
+  check reads command arguments, so it cannot limit what a person does in that page.
+- `gog auth remove` does not need a browser, so it keeps `--no-input`.
+
+The identity check reads arguments that the caller supplies. It prevents an accidental
+login to the wrong account. It is not a hard boundary. A process can still call
+`/opt/homebrew/bin/gog` directly, as described below.
+
 This design prevents accidental identity changes. A process can still use an absolute
 path such as `/opt/homebrew/bin/aws` to bypass the shim. A later trusted launcher can
 restrict `PATH`, issue a short-lived workspace grant, and require that grant at each
