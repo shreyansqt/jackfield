@@ -1,0 +1,346 @@
+.\" Manual page for the jf command.
+.\" Render it while you edit with: man ./docs/man/jf.1
+.TH JF 1 "2026-08-25" "jackfield" "User Commands"
+.
+.SH NAME
+jf \- the patchbay for agent credentials
+.
+.SH SYNOPSIS
+.B jf
+.RB [ \-\-config
+.IR PATH ]
+.I COMMAND
+.RI [ ARGS .\|.\|.]
+.br
+.B jf help
+.RI [ COMMAND ]
+.br
+.B jf \-\-version
+.
+.SH DESCRIPTION
+.B jf
+answers two questions.
+Which identity does a command line tool get in this directory?
+And where does that credential come from?
+.PP
+A manifest,
+.IR jackfield.yaml ,
+answers the first question.
+It maps a directory to a workspace, and a workspace to the profiles that each
+command may use.
+.B jf run
+starts the tool under one of those profiles.
+It removes the ambient credential variables, and it rejects the arguments that
+would select another account, so the child process cannot change identity.
+.PP
+The jackfield hub answers the second question.
+The hub holds the credentials themselves.
+This machine is a cache.
+.B jf login
+signs this machine in to the hub,
+.B jf status
+shows where every connection stands, and
+.B jf creds get
+reads one credential for a script.
+.PP
+A machine can use either half alone.
+A machine that only reaches the hub needs no manifest.
+A machine that only gates local tools needs no hub.
+.
+.SH COMMANDS
+.SS Workspace commands
+.TP
+.BI "run [\-\-profile " NAME "] " COMMAND " [" ARGS .\|.\|.]
+Run a command line tool under the identity of this directory.
+.B jf
+finds the workspace that owns the working directory, picks the profile that this
+workspace allows for that command, and starts the tool.
+A workspace with more than one allowed profile and no default needs
+.BR \-\-profile .
+.TP
+.BI "resolve [\-\-profile " NAME "] " COMMAND " [" ARGS .\|.\|.]
+Show which identity a command would get, and run nothing.
+It prints the workspace, the command, the profile, and the executable.
+It starts no child process, so it is safe to run at any time.
+.
+.SS Hub commands
+.TP
+.BI "login [\-name " NAME "] [\-device\-code | \-browser]"
+Sign this machine in to the hub.
+.B jf
+prints a short code and a URL, then waits while you approve the machine in a
+browser.
+It stores the device token in
+.IR ~/.config/jackfield/device\-token .
+.RS
+.PP
+.B jf
+picks the flow when you give no flag.
+A machine reached over SSH, or a Linux machine with no graphical session, gets
+the device-code flow.
+That is a guess about the environment, so
+.B \-device\-code
+and
+.B \-browser
+override it.
+.RE
+.TP
+.B devices
+List the machines that hold a device token, and mark the one you are on.
+.TP
+.BI "devices revoke " NAME
+Revoke one machine's token, by the name that the list shows or by its device id.
+Any machine can revoke any other, so you can revoke a lost laptop from the
+machine still in your hand.
+Revoking this machine is allowed, and
+.B jf
+says so, because the next hub command here then needs
+.B jf login
+again.
+.TP
+.B status
+Show where every connection stands.
+The panel shows the hub address, the name of this machine, and one line per
+connection: its identity, the age of its credential, and whether the upstream
+service still accepts it.
+.TP
+.BI "auth [\-identity " WHO "] [\-stdin] [\-ticket " TICKET "] " CONNECTION
+Store a credential in the hub.
+A write needs a fresh browser approval every time, so
+.B jf
+opens the hub's approval page and asks you to paste back the ticket the page
+shows.
+.B jf
+reads the secret from a hidden prompt, or from standard input with
+.BR \-stdin ,
+and never from a command argument.
+Arguments appear in the process list, where any other process on the machine
+reads them.
+.TP
+.BI "creds get [\-no\-cache] " CONNECTION
+Read one credential from the hub.
+The value goes to standard output alone, so a script reads it with a command
+substitution.
+Every other message goes to standard error.
+.
+.SS Other commands
+.TP
+.B version
+Print the version of
+.BR jf .
+A release build prints its tag.
+A build from source prints
+.BR dev .
+.TP
+.BI "help [" COMMAND ]
+Print the overview of every command, or the help for one command.
+.B "jf " COMMAND " \-h"
+prints the same page.
+.
+.SH OPTIONS
+.TP
+.BI \-\-config " PATH"
+Read this manifest instead of searching for
+.IR jackfield.yaml .
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.B \-\-help
+Print the overview and exit.
+.
+.SH FILES
+.TP
+.I jackfield.yaml
+The manifest.
+It maps directories to workspaces, workspaces to the commands they allow, and
+commands to the profiles they may use.
+It also holds the
+.B hub:
+key, the normal place for the hub address.
+.B jf
+searches for it in the working directory, then in each parent directory, then in
+.IR ~/.config/jackfield/jackfield.yaml .
+.TP
+.I ~/.config/jackfield/device\-token
+This machine's device token, written by
+.BR "jf login" .
+The file has mode 0600 and its directory has mode 0700.
+.B jf
+refuses to read a token file that other users can read, because a leaked device
+token reads every credential in the hub.
+.RS
+.PP
+This is a file, not a keychain item, on purpose.
+A headless machine has no unlocked login session, so a keychain item is
+unreadable there.
+.RE
+.TP
+.I ~/.cache/jackfield/
+The cached credentials, with mode 0600 on each file and mode 0700 on the
+directory.
+An entry lives for five minutes.
+That is short enough that a credential
+.B jf auth
+replaced reaches every machine within five minutes, and long enough that a shell
+loop does not open a connection for every call.
+.TP
+.I ~/.local/jackfield/bin/
+The optional command shims.
+They make
+.BR gog ,
+.BR wrangler ,
+and
+.B aws
+run through the gate.
+Put this directory first on
+.BR PATH .
+.
+.SH ENVIRONMENT
+.TP
+.B JF_CONFIG
+The manifest to read.
+It overrides the search, and
+.B \-\-config
+overrides it.
+.TP
+.B JF_HUB
+The hub address.
+It overrides the
+.B hub:
+key of the manifest.
+Use it to reach a second deployment without editing the file that every machine
+shares.
+.TP
+.B JF_TOKEN_FILE
+The device token file, instead of
+.IR ~/.config/jackfield/device\-token .
+.TP
+.B JF_CACHE_DIR
+The credential cache directory, instead of
+.IR ~/.cache/jackfield/ .
+.
+.SH EXAMPLES
+See which Google account
+.B gog
+gets in this directory, and run nothing:
+.PP
+.RS
+.EX
+jf resolve gog
+.EE
+.RE
+.PP
+Run a tool under the identity of this workspace:
+.PP
+.RS
+.EX
+jf run gog whoami \-\-plain
+jf run wrangler r2 bucket list
+.EE
+.RE
+.PP
+Pick the profile when a workspace allows more than one.
+AWS has no default on purpose, because staging and production carry different
+risk:
+.PP
+.RS
+.EX
+jf run \-\-profile aws\-smarta\-staging aws sts get\-caller\-identity
+.EE
+.RE
+.PP
+With the shims on
+.BR PATH ,
+the same commands are shorter:
+.PP
+.RS
+.EX
+gog whoami \-\-plain
+wrangler r2 bucket list
+aws \-\-jf\-profile aws\-smarta\-staging sts get\-caller\-identity
+.EE
+.RE
+.PP
+Sign a machine in to the hub, and name it in the device list:
+.PP
+.RS
+.EX
+jf login \-name macbook
+jf login \-device\-code
+.EE
+.RE
+.PP
+See where every connection stands, then list and revoke machines:
+.PP
+.RS
+.EX
+jf status
+jf devices
+jf devices revoke grumpyorange
+.EE
+.RE
+.PP
+Read one credential in a script:
+.PP
+.RS
+.EX
+token=$(jf creds get slack\-smarta)
+.EE
+.RE
+.PP
+Store a credential:
+.PP
+.RS
+.EX
+jf auth slack\-smarta
+jf auth \-identity you@example.com slack\-smarta
+printf '%s' "$SECRET" | jf auth \-stdin \-ticket TICKET slack\-smarta
+.EE
+.RE
+.
+.SH EXIT STATUS
+.B jf
+exits 0 when the command succeeds, and 1 when it fails.
+.B jf run
+exits with the status of the child process, so a script reads the tool's own
+result.
+.
+.SH DIAGNOSTICS
+.TP
+.B this machine has no device token; run `jf login`
+No hub command works until this machine is signed in.
+Run
+.BR "jf login" .
+.TP
+.B no hub address
+.B jf
+found no hub to talk to.
+Add a
+.B hub:
+key to
+.IR jackfield.yaml ,
+or set
+.BR JF_HUB .
+.TP
+.B the working directory ... is in no workspace of this manifest
+The manifest covers no workspace whose
+.B roots:
+contain this directory.
+Add one, or change to a directory that a workspace already covers.
+.TP
+.B this command has more than one allowed profile and no default
+Name a profile with
+.BR \-\-profile .
+The message lists the profiles that this workspace allows.
+.
+.SH SEE ALSO
+The full documentation lives in the repository:
+.IR docs/cli.md ,
+the command reference, and
+.IR docs/cli\-gate.md ,
+which describes the gate and the hub in detail.
+.PP
+.UR https://github.com/shreyansqt/jackfield
+https://github.com/shreyansqt/jackfield
+.UE

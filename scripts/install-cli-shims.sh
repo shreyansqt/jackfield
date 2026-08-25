@@ -89,5 +89,42 @@ for name in jf gog wrangler aws; do
 	ln -sfn "$jf_binary" "$shim_dir/$name"
 done
 
+# Install the man page, so `man jf` works. It goes under the home directory, so
+# this needs no sudo. The clone holds the source, so this step runs only here.
+man_dir=${JF_MAN_DIR:-$user_home/.local/share/man/man1}
+if [ -f "$repo_dir/docs/man/jf.1" ]; then
+	mkdir -p "$man_dir"
+	cp "$repo_dir/docs/man/jf.1" "$man_dir/jf.1"
+	chmod 644 "$man_dir/jf.1"
+	man_installed=1
+else
+	man_installed=0
+fi
+
 echo "Installed Jackfield CLI shims in $shim_dir, from $source_note."
 echo "Put $shim_dir first on PATH so the shims win over the real commands."
+
+if [ "$man_installed" = 1 ]; then
+	echo "Installed the man page in $man_dir/jf.1."
+	# `man` finds the page on its own when its search path already covers the
+	# directory. The hint prints only when it does not, so a machine that works
+	# says nothing.
+	man_root=$(dirname -- "$man_dir")
+	if ! man -w jf >/dev/null 2>&1; then
+		case "${SHELL:-}" in
+		*/fish) shell_profile=$user_home/.config/fish/config.fish ;;
+		*/bash) shell_profile=$user_home/.bashrc ;;
+		*/zsh) shell_profile=$user_home/.zshrc ;;
+		*) shell_profile=$user_home/.profile ;;
+		esac
+		echo "Add $man_root to MANPATH so that 'man jf' works:"
+		case "$shell_profile" in
+		*config.fish)
+			echo "  set -gx MANPATH $man_root \$MANPATH  # in $shell_profile"
+			;;
+		*)
+			echo "  echo 'export MANPATH=\"$man_root:\$MANPATH\"' >> $shell_profile"
+			;;
+		esac
+	fi
+fi

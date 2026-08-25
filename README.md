@@ -118,6 +118,18 @@ jf status
 Put the hub in `~/.config/jackfield/jackfield.yaml` as a `hub:` key to set it for
 every shell rather than one. See [docs/cli-gate.md](docs/cli-gate.md) for both.
 
+### Learn the commands
+
+Three ways, all saying the same things:
+
+```sh
+jf help          # every command, one line each
+jf help login    # one command, with its flags and examples
+man jf           # the manual page, installed alongside the binary
+```
+
+[docs/cli.md](docs/cli.md) is the same reference on the web.
+
 ### Read the script before you pipe it
 
 Piping a script from the network into `sh` runs code you have not read. If you would

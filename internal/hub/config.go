@@ -67,7 +67,8 @@ func normalizeBaseURL(raw string) (string, error) {
 }
 
 func missingHubError() error {
-	return fmt.Errorf("no hub address; add a hub: key to jackfield.yaml or set %s", EnvBaseURL)
+	return fmt.Errorf("no hub address. Set it for every shell with a hub: key in jackfield.yaml, "+
+		"or for this shell with %s=https://your-hub.example.workers.dev", EnvBaseURL)
 }
 
 // TokenPath returns the file that holds this machine's device token.

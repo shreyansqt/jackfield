@@ -10,6 +10,7 @@
 #
 # Environment overrides:
 #   JF_INSTALL_DIR  where to put the jf binary (default ~/.local/bin)
+#   JF_MAN_DIR      where to put the man page (default ~/.local/share/man/man1)
 #   JF_VERSION      a release tag such as v1.2.3 (default: the latest release)
 #   JF_REPO         owner/name of the source repository
 
@@ -17,8 +18,10 @@ set -eu
 
 repo=${JF_REPO:-shreyansqt/jackfield}
 install_dir=${JF_INSTALL_DIR:-${HOME}/.local/bin}
+man_dir=${JF_MAN_DIR:-${HOME}/.local/share/man/man1}
 requested_version=${JF_VERSION:-latest}
 tmp_dir=
+man_installed=0
 
 # --- output -----------------------------------------------------------------
 
@@ -194,7 +197,42 @@ main() {
 	installed_version=$("$target" --version 2>/dev/null || printf 'jf (version unknown)')
 	printf '%s\n' "${green}Installed ${installed_version} in ${target}${reset}" >&2
 
+	install_man_page
+
 	report_next_steps "$target"
+}
+
+# install_man_page puts jf.1 under the home directory, so `man jf` works without
+# sudo. The page is optional: a machine that cannot fetch it still has a working
+# jf, and `jf help` says the same things. So a failure here is a note, not an
+# error.
+install_man_page() {
+	man_installed=0
+
+	# The release archive may carry the page. Prefer that copy, because it
+	# matches the binary that was just installed.
+	if [ -f "${tmp_dir}/jf.1" ]; then
+		source_page="${tmp_dir}/jf.1"
+	elif [ -f "${tmp_dir}/docs/man/jf.1" ]; then
+		source_page="${tmp_dir}/docs/man/jf.1"
+	else
+		# Otherwise fetch it from the repository at the installed version.
+		if [ "$requested_version" = latest ]; then
+			man_ref=main
+		else
+			man_ref=$requested_version
+		fi
+		source_page="${tmp_dir}/jf.1.fetched"
+		if ! download "https://raw.githubusercontent.com/${repo}/${man_ref}/docs/man/jf.1" "$source_page"; then
+			return 0
+		fi
+	fi
+
+	mkdir -p "$man_dir" 2>/dev/null || return 0
+	cp "$source_page" "${man_dir}/jf.1" 2>/dev/null || return 0
+	chmod 644 "${man_dir}/jf.1" 2>/dev/null || true
+	man_installed=1
+	step "Installed the man page in ${man_dir}/jf.1."
 }
 
 # on_path reports whether the install directory is already on PATH.
@@ -241,6 +279,23 @@ report_next_steps() {
 		say ''
 	fi
 
+	# The MANPATH hint prints only when `man jf` does not already work. Most
+	# machines search ~/.local/share/man on their own, and those say nothing.
+	if [ "$man_installed" = 1 ] && ! man -w jf >/dev/null 2>&1; then
+		man_root=$(dirname -- "$man_dir")
+		profile=$(shell_profile)
+		say "${bold}Add ${man_root} to your MANPATH${reset} so that 'man jf' works"
+		case "$profile" in
+		*config.fish)
+			say "  set -gx MANPATH ${man_root} \$MANPATH  # in ${profile}"
+			;;
+		*)
+			say "  echo 'export MANPATH=\"${man_root}:\$MANPATH\"' >> ${profile}"
+			;;
+		esac
+		say ''
+	fi
+
 	say "${bold}Next, two steps${reset}"
 	say ''
 	say "  ${bold}1. Point jf at your hub.${reset}"
@@ -256,7 +311,9 @@ report_next_steps() {
 	say "     prints a code to type on another device instead."
 	say ''
 	say "Then run ${bold}jf status${reset} to see where every connection stands."
-	say "Docs: https://github.com/${repo}/blob/main/docs/cli-gate.md"
+	say ''
+	say "Run ${bold}jf help${reset} to see every command, or ${bold}man jf${reset} to read the manual."
+	say "Docs: https://github.com/${repo}/blob/main/docs/cli.md"
 }
 
 main "$@"

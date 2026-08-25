@@ -62,6 +62,9 @@ type Resolution struct {
 func Load(path string) (Config, error) {
 	file, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return Config{}, fmt.Errorf("no manifest at %s. Write one there, or name a different file with --config PATH or the JF_CONFIG environment variable", path)
+		}
 		return Config{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	defer file.Close()
@@ -162,14 +165,14 @@ func (config Config) ResolveArgs(cwd string, commandName string, requestedProfil
 		}
 	}
 	if len(matches) == 0 {
-		return Resolution{}, nil, fmt.Errorf("working directory %q is not in a configured workspace", canonicalCWD)
+		return Resolution{}, nil, fmt.Errorf("the working directory %q is in no workspace of this manifest. Add a workspace whose roots: cover this directory, or change to a directory that a workspace already covers", canonicalCWD)
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].rootLength > matches[j].rootLength })
 	workspaceName := matches[0].name
 	workspace := config.Workspaces[workspaceName]
 	selection, ok := workspace.Commands[commandName]
 	if !ok {
-		return Resolution{}, nil, fmt.Errorf("command %q is not allowed in workspace %q", commandName, workspaceName)
+		return Resolution{}, nil, fmt.Errorf("the workspace %q does not allow the command %q. Add it under that workspace's commands: in the manifest, or run the command in a workspace that allows it", workspaceName, commandName)
 	}
 
 	requestedProfile, childArgs, err := selectProfileArgs(selection, requestedProfile, args)
@@ -198,7 +201,7 @@ func selectProfile(selection CommandSelection, requested string) (string, error)
 		if profileName, ok := selection.Aliases[requested]; ok {
 			return profileName, nil
 		}
-		return "", fmt.Errorf("profile %q is not allowed; allowed profiles: %s", requested, strings.Join(selection.Profiles, ", "))
+		return "", fmt.Errorf("the profile %q is not allowed here. The allowed profiles are: %s", requested, strings.Join(selection.Profiles, ", "))
 	}
 	if selection.Default != "" {
 		return selection.Default, nil
@@ -206,7 +209,7 @@ func selectProfile(selection CommandSelection, requested string) (string, error)
 	if len(selection.Profiles) == 1 {
 		return selection.Profiles[0], nil
 	}
-	return "", fmt.Errorf("select a profile with --profile; allowed profiles: %s", strings.Join(selection.Profiles, ", "))
+	return "", fmt.Errorf("this command has more than one allowed profile and no default. Name one with --profile. The allowed profiles are: %s", strings.Join(selection.Profiles, ", "))
 }
 
 func selectProfileArgs(selection CommandSelection, requested string, args []string) (string, []string, error) {

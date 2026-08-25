@@ -67,7 +67,7 @@ func runHubAction(ctx context.Context, environment *hubEnvironment, action strin
 	case "auth":
 		return runAuth(ctx, environment, args)
 	default:
-		return fmt.Errorf("unknown action %q", action)
+		return unknownCommandError(action)
 	}
 }
 
@@ -116,15 +116,16 @@ func (environment *hubEnvironment) client() (*hub.Client, error) {
 
 func runLogin(ctx context.Context, environment *hubEnvironment, args []string) error {
 	flags := flag.NewFlagSet("login", flag.ContinueOnError)
-	flags.SetOutput(environment.Stderr)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 	deviceCodeFlow := flags.Bool("device-code", false, "Print the code and URL for another device instead of opening a browser")
 	browserFlow := flags.Bool("browser", false, "Open a browser even when this machine looks headless")
 	deviceName := flags.String("name", "", "The name this machine gets in `jf devices`")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("%w. Run `jf help %s` to see the flags", err, flags.Name())
 	}
 	if *deviceCodeFlow && *browserFlow {
-		return fmt.Errorf("use --device-code or --browser, not both")
+		return fmt.Errorf("--device-code and --browser ask for different flows. Use one of them, not both")
 	}
 
 	baseURL, err := hub.BaseURL(environment.ManifestPath)
@@ -214,9 +215,10 @@ func formatMinutes(seconds int) string {
 
 func runStatus(ctx context.Context, environment *hubEnvironment, args []string) error {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
-	flags.SetOutput(environment.Stderr)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("%w. Run `jf help %s` to see the flags", err, flags.Name())
 	}
 
 	client, err := environment.client()
@@ -249,9 +251,10 @@ func runStatus(ctx context.Context, environment *hubEnvironment, args []string) 
 
 func runDevices(ctx context.Context, environment *hubEnvironment, args []string) error {
 	flags := flag.NewFlagSet("devices", flag.ContinueOnError)
-	flags.SetOutput(environment.Stderr)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("%w. Run `jf help %s` to see the flags", err, flags.Name())
 	}
 
 	client, err := environment.client()
@@ -269,11 +272,11 @@ func runDevices(ctx context.Context, environment *hubEnvironment, args []string)
 	switch action := flags.Arg(0); action {
 	case "revoke":
 		if flags.NArg() < 2 {
-			return fmt.Errorf("jf devices revoke needs a device name; run `jf devices` to see the names")
+			return fmt.Errorf("`jf devices revoke` needs a device name, for example `jf devices revoke grumpyorange`. Run `jf devices` to see the names")
 		}
 		return revokeDevice(ctx, environment, client, flags.Arg(1))
 	default:
-		return fmt.Errorf("unknown action %q; use `jf devices` or `jf devices revoke NAME`", action)
+		return fmt.Errorf("`jf devices` has no subcommand %q. Run `jf devices` to list the machines, or `jf devices revoke NAME` to remove one", action)
 	}
 }
 
@@ -308,23 +311,24 @@ func revokeDevice(ctx context.Context, environment *hubEnvironment, client *hub.
 
 func runCreds(ctx context.Context, environment *hubEnvironment, args []string) error {
 	flags := flag.NewFlagSet("creds", flag.ContinueOnError)
-	flags.SetOutput(environment.Stderr)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 	noCache := flags.Bool("no-cache", false, "Ask the hub even when a fresh cached copy exists")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("%w. Run `jf help %s` to see the flags", err, flags.Name())
 	}
 	if flags.NArg() == 0 {
-		return fmt.Errorf("use `jf creds get CONNECTION`")
+		return fmt.Errorf("`jf creds` needs a subcommand. Run `jf creds get CONNECTION`, for example `jf creds get slack-smarta`")
 	}
 
 	switch action := flags.Arg(0); action {
 	case "get":
 		if flags.NArg() < 2 {
-			return fmt.Errorf("jf creds get needs a connection name")
+			return fmt.Errorf("`jf creds get` needs a connection name, for example `jf creds get slack-smarta`. Run `jf status` to see the connection names")
 		}
 		return getCredential(ctx, environment, flags.Arg(1), *noCache)
 	default:
-		return fmt.Errorf("unknown action %q; use `jf creds get CONNECTION`", action)
+		return fmt.Errorf("`jf creds` has no subcommand %q. The only subcommand is `jf creds get CONNECTION`", action)
 	}
 }
 
@@ -370,15 +374,16 @@ func getCredential(ctx context.Context, environment *hubEnvironment, connection 
 
 func runAuth(ctx context.Context, environment *hubEnvironment, args []string) error {
 	flags := flag.NewFlagSet("auth", flag.ContinueOnError)
-	flags.SetOutput(environment.Stderr)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
 	identity := flags.String("identity", "", "Who this credential acts as, for the status panel")
 	ticket := flags.String("ticket", "", "An approval ticket from the hub's approval page")
 	fromStdin := flags.Bool("stdin", false, "Read the secret from standard input instead of prompting")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return fmt.Errorf("%w. Run `jf help %s` to see the flags", err, flags.Name())
 	}
 	if flags.NArg() == 0 {
-		return fmt.Errorf("use `jf auth CONNECTION`")
+		return fmt.Errorf("`jf auth` needs a connection name, for example `jf auth slack-smarta`. Run `jf status` to see the connection names")
 	}
 	connection := flags.Arg(0)
 

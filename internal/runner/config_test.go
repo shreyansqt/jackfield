@@ -71,13 +71,13 @@ func TestResolveUsesCanonicalWorkspacePath(t *testing.T) {
 
 func TestResolveRequiresChoiceForMultipleProfiles(t *testing.T) {
 	_, err := testConfig(t.TempDir()).Resolve(t.TempDir(), "aws", "")
-	if err == nil || !strings.Contains(err.Error(), "not in a configured workspace") {
+	if err == nil || !strings.Contains(err.Error(), "is in no workspace of this manifest") {
 		t.Fatalf("expected workspace error, got %v", err)
 	}
 
 	root := t.TempDir()
 	_, err = testConfig(root).Resolve(root, "aws", "")
-	if err == nil || !strings.Contains(err.Error(), "select a profile") {
+	if err == nil || !strings.Contains(err.Error(), "Name one with --profile") {
 		t.Fatalf("expected profile choice error, got %v", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestResolveArgsKeepsNoFlagBehavior(t *testing.T) {
 			t.Fatalf("%s selected profile %q", command, resolution.Profile)
 		}
 	}
-	if _, _, err := testConfig(root).ResolveArgs(root, "aws", "", []string{"sts"}); err == nil || !strings.Contains(err.Error(), "select a profile") {
+	if _, _, err := testConfig(root).ResolveArgs(root, "aws", "", []string{"sts"}); err == nil || !strings.Contains(err.Error(), "Name one with --profile") {
 		t.Fatalf("expected AWS profile choice error, got %v", err)
 	}
 }

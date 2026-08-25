@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,25 +47,54 @@ func commandArgs(program string, args []string) ([]string, error) {
 }
 
 func run(args []string) error {
-	// The version check runs first. `jf --version` carries no subcommand, and
-	// it must answer on a machine that has no manifest yet.
+	// The version and help checks run first. Neither carries a subcommand, and
+	// both must answer on a machine that has no manifest yet.
 	if isVersionRequest(args) {
 		printVersion(os.Stdout)
 		return nil
 	}
+	// `jf` with no arguments prints the overview rather than an error. A person
+	// who types the bare name wants to learn what the tool does.
+	if len(args) == 0 || isHelpRequest(args) {
+		printOverview(os.Stdout)
+		return nil
+	}
 
 	global := flag.NewFlagSet("jf", flag.ContinueOnError)
-	global.SetOutput(os.Stderr)
+	global.SetOutput(io.Discard)
+	global.Usage = func() {}
 	configPath := global.String("config", "", "Path to the Jackfield manifest")
 	if err := global.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			printOverview(os.Stdout)
+			return nil
+		}
+		return fmt.Errorf("%w. Run `jf help` to see every command", err)
 	}
 	if global.NArg() == 0 {
-		return fmt.Errorf("use jf [--config PATH] run|resolve|login|status|devices|creds|auth [ARGS], or jf --version")
+		printOverview(os.Stdout)
+		return nil
 	}
 
 	action := global.Arg(0)
 	actionArgs := global.Args()[1:]
+
+	// `jf help COMMAND` and `jf COMMAND -h` print the same page.
+	if action == "help" {
+		return runHelp(os.Stdout, actionArgs)
+	}
+	entry, known := commands[action]
+	if !known {
+		return unknownCommandError(action)
+	}
+	if wantsCommandHelp(actionArgs) {
+		printCommandHelp(os.Stdout, entry)
+		return nil
+	}
+	if action == "version" {
+		printVersion(os.Stdout)
+		return nil
+	}
 
 	// The hub commands run without a manifest. `jf login` is the first command a
 	// fresh machine runs, before any jackfield.yaml exists there, so a missing
@@ -89,13 +119,14 @@ func run(args []string) error {
 	}
 
 	flags := flag.NewFlagSet(action, flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
-	requestedProfile := flags.String("profile", "", "Select one allowed profile")
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
+	requestedProfile := flags.String("profile", "", "Select one of the profiles that this workspace allows")
 	if err := flags.Parse(actionArgs); err != nil {
-		return err
+		return fmt.Errorf("%w. Run `jf help %s` to see the flags", err, action)
 	}
 	if flags.NArg() == 0 {
-		return fmt.Errorf("%s needs a command", action)
+		return fmt.Errorf("`jf %s` needs a command to act on, for example `jf %s gog whoami`. Run `jf help %s` for more", action, action, action)
 	}
 	commandName := flags.Arg(0)
 	resolution, commandArgs, err := config.ResolveArgs(cwd, commandName, *requestedProfile, flags.Args()[1:])
@@ -110,8 +141,22 @@ func run(args []string) error {
 	case "run":
 		return resolution.Exec(commandArgs, os.Environ(), os.Stdin, os.Stdout, os.Stderr)
 	default:
-		return fmt.Errorf("unknown action %q; use run or resolve", action)
+		return unknownCommandError(action)
 	}
+}
+
+// runHelp answers `jf help` and `jf help COMMAND`.
+func runHelp(out io.Writer, args []string) error {
+	if len(args) == 0 {
+		printOverview(out)
+		return nil
+	}
+	entry, known := commands[args[0]]
+	if !known {
+		return unknownCommandError(args[0])
+	}
+	printCommandHelp(out, entry)
+	return nil
 }
 
 func findConfig(explicit string) (string, error) {
@@ -144,5 +189,6 @@ func findConfig(explicit string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("no jackfield.yaml found; set JF_CONFIG or use --config")
+	return "", fmt.Errorf("found no jackfield.yaml here or in any parent directory, and none in ~/.config/jackfield/. " +
+		"Write one there, or name a file with --config PATH or the JF_CONFIG environment variable")
 }
