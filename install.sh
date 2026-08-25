@@ -204,7 +204,7 @@ main() {
 
 # install_man_page puts jf.1 under the home directory, so `man jf` works without
 # sudo. The page is optional: a machine that cannot fetch it still has a working
-# jf, and `jf help` says the same things. So a failure here is a note, not an
+# jf, and `jf --help` says the same things. So a failure here is a note, not an
 # error.
 install_man_page() {
 	man_installed=0
@@ -312,7 +312,8 @@ report_next_steps() {
 	say ''
 	say "Then run ${bold}jf status${reset} to see where every connection stands."
 	say ''
-	say "Run ${bold}jf help${reset} to see every command, or ${bold}man jf${reset} to read the manual."
+	say "Run ${bold}jf --help${reset} to see every command, or ${bold}man jf${reset} to read the manual."
+	say "An AI agent reads ${bold}jf schema --json${reset} for the whole command tree as JSON."
 	say "Docs: https://github.com/${repo}/blob/main/docs/cli.md"
 }
 

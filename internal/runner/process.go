@@ -22,13 +22,14 @@ func (resolution Resolution) Exec(args []string, baseEnv []string, stdin io.Read
 }
 
 // launchPrefix validates the child arguments and returns the prefix arguments for
-// them. A command that matches an interactive rule keeps its denied-argument checks,
-// must name the pinned identity, and loses the prefix arguments that block prompts.
+// them. A command that matches a subcommand override keeps its denied-argument
+// checks, must name the pinned identity, and loses the prefix arguments that the
+// rule names.
 func (profile Profile) launchPrefix(args []string) ([]string, error) {
 	if err := ValidateArgs(args, profile.DeniedArgs); err != nil {
 		return nil, err
 	}
-	rule, found := profile.interactiveRule(args)
+	rule, found := profile.overrideFor(args)
 	if !found {
 		return profile.PrefixArgs, nil
 	}
@@ -38,16 +39,16 @@ func (profile Profile) launchPrefix(args []string) ([]string, error) {
 	return removeArgs(profile.PrefixArgs, rule.DropPrefixArgs), nil
 }
 
-// interactiveRule returns the first rule whose subcommand words start the command.
+// overrideFor returns the first rule whose subcommand words start the command.
 // Flags before and between those words are ignored, so `gog --verbose auth add`
 // matches the `auth add` rule.
-func (profile Profile) interactiveRule(args []string) (Interactive, bool) {
-	for _, rule := range profile.Interactive {
+func (profile Profile) overrideFor(args []string) (SubcommandOverride, bool) {
+	for _, rule := range profile.Overrides() {
 		if matchesSubcommand(args, rule.Subcommand) {
 			return rule, true
 		}
 	}
-	return Interactive{}, false
+	return SubcommandOverride{}, false
 }
 
 func matchesSubcommand(args []string, subcommand []string) bool {
@@ -70,7 +71,7 @@ func matchesSubcommand(args []string, subcommand []string) bool {
 // validateIdentity rejects an interactive command that names an account other than
 // the pinned one. gog takes the account as a positional argument, for example
 // `gog auth add someone@example.com`, so every word after the subcommand counts.
-func (rule Interactive) validateIdentity(args []string) error {
+func (rule SubcommandOverride) validateIdentity(args []string) error {
 	if rule.Identity == "" {
 		return nil
 	}
@@ -90,18 +91,43 @@ func (rule Interactive) validateIdentity(args []string) error {
 	return nil
 }
 
+// removeArgs drops each unwanted argument from the prefix. A dropped flag takes
+// its value with it, because a prefix such as `--profile default` leaves the bare
+// word `default` behind otherwise, and the tool then reads that word as a
+// subcommand. A flag is treated as valued when the next prefix entry is a plain
+// word rather than another flag, which covers `--profile default` and leaves a
+// switch such as `--no-input` alone.
 func removeArgs(args []string, unwanted []string) []string {
 	drop := make(map[string]bool, len(unwanted))
 	for _, name := range unwanted {
 		drop[name] = true
 	}
 	result := make([]string, 0, len(args))
-	for _, arg := range args {
-		if !drop[arg] {
-			result = append(result, arg)
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if drop[arg] {
+			if index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
+				index++
+			}
+			continue
 		}
+		if name, _, joined := strings.Cut(arg, "="); joined && drop[name] {
+			continue
+		}
+		result = append(result, arg)
 	}
 	return result
+}
+
+// containsArg reports whether the prefix names this argument, either on its own
+// or in the `--flag=value` form.
+func containsArg(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == name || strings.HasPrefix(arg, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateArgs(args []string, denied []string) error {

@@ -2,221 +2,344 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
-// dispatchedCommands lists every command that main.go actually dispatches.
+// newTestTree builds the command tree with no machine behind it.
 //
-// This list is the other half of the guard below. A new command must appear
-// here and in the help registry, so a person cannot add a command that the help
-// output never mentions.
-var dispatchedCommands = []string{
-	"run", "resolve",
-	"login", "status", "devices", "creds", "auth",
-	"version", "help",
+// The help tests read the tree's text, so they need no hub, no manifest, and no
+// terminal.
+func newTestTree() *cobra.Command {
+	return newRootCommand(defaultHubEnvironment(""))
 }
 
-// TestEveryDispatchedCommandHasHelp is the guard the CLI needs most. A command
-// that dispatches but has no help entry is a command nobody can discover.
-func TestEveryDispatchedCommandHasHelp(t *testing.T) {
-	for _, name := range dispatchedCommands {
-		entry, found := commands[name]
+// walk calls visit for the root command and every command under it.
+func walk(command *cobra.Command, visit func(*cobra.Command)) {
+	visit(command)
+	for _, child := range command.Commands() {
+		walk(child, visit)
+	}
+}
+
+// TestEveryCommandHasHelpText is the guard the CLI needs most. A command that
+// dispatches but has no help is a command nobody can discover.
+//
+// This is the Cobra form of the guard that the old hand-written help registry
+// carried. The tree is now the single source, so a new command cannot exist
+// without the text that describes it.
+func TestEveryCommandHasHelpText(t *testing.T) {
+	walk(newTestTree(), func(command *cobra.Command) {
+		// The framework supplies these, and their text is not ours to write.
+		switch command.Name() {
+		case "help", "completion", "man", "bash", "zsh", "fish", "powershell":
+			return
+		}
+		path := command.CommandPath()
+
+		if strings.TrimSpace(command.Short) == "" {
+			t.Errorf("the command %q has no Short summary", path)
+		}
+		// A hidden alias needs a summary so `jf help auth` says something, but
+		// it needs no full page: it exists only to point at the current name.
+		if command.Hidden {
+			return
+		}
+		if strings.TrimSpace(command.Long) == "" {
+			t.Errorf("the command %q has no Long description", path)
+		}
+		// A command that only groups subcommands needs no example of its own,
+		// because each subcommand under it carries one.
+		if !command.HasSubCommands() && strings.TrimSpace(command.Example) == "" {
+			t.Errorf("the command %q has no example", path)
+		}
+	})
+}
+
+// TestEveryFlagHasUsageText checks that no flag reaches the help as a bare name.
+func TestEveryFlagHasUsageText(t *testing.T) {
+	walk(newTestTree(), func(command *cobra.Command) {
+		command.NonInheritedFlags().VisitAll(func(item *pflag.Flag) {
+			if strings.TrimSpace(item.Usage) == "" {
+				t.Errorf("the flag --%s of %q has no usage text", item.Name, command.CommandPath())
+			}
+		})
+	})
+}
+
+// TestTheCommandTreeIsTheAgreedShape names every command the CLI promises.
+//
+// A rename is a breaking change for a person's muscle memory and for every
+// document that names the old word, so it must be a deliberate edit here rather
+// than a silent drift.
+func TestTheCommandTreeIsTheAgreedShape(t *testing.T) {
+	wanted := []string{
+		"jf status",
+		"jf login",
+		"jf logout",
+		"jf device",
+		"jf device list",
+		"jf device revoke",
+		"jf cred",
+		"jf cred get",
+		"jf cred set",
+		"jf run",
+		"jf resolve",
+		"jf schema",
+	}
+
+	found := map[string]bool{}
+	walk(newTestTree(), func(command *cobra.Command) {
+		found[command.CommandPath()] = true
+	})
+	for _, path := range wanted {
+		if !found[path] {
+			t.Errorf("the command tree has no %q", path)
+		}
+	}
+}
+
+// TestHelpNamesEveryCommand checks that `jf --help` lists the whole tree.
+func TestHelpNamesEveryCommand(t *testing.T) {
+	root := newTestTree()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"--help"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	text := out.String()
+	for _, name := range []string{"status", "login", "logout", "device", "cred", "run", "resolve", "schema"} {
+		if !strings.Contains(text, name) {
+			t.Errorf("the overview does not list %q", name)
+		}
+	}
+	// The alias is hidden, so it must not teach a new caller the old name.
+	if strings.Contains(text, "\n  auth") {
+		t.Error("the overview lists the deprecated `auth` alias")
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* jf schema --json                                                    */
+/* ------------------------------------------------------------------ */
+
+// TestSchemaDescribesTheWholeTree checks that the JSON an agent reads carries
+// every command, with the flags and arguments that each one takes.
+func TestSchemaDescribesTheWholeTree(t *testing.T) {
+	root := newTestTree()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"schema", "--json"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var document schemaDocument
+	if err := json.Unmarshal(out.Bytes(), &document); err != nil {
+		t.Fatalf("the schema is not valid JSON: %v", err)
+	}
+	if document.Tool != "jf" {
+		t.Errorf("got tool %q, want jf", document.Tool)
+	}
+	if strings.TrimSpace(document.Description) == "" {
+		t.Error("the schema carries no description of the tool")
+	}
+
+	paths := map[string]schemaCommand{}
+	var collect func([]schemaCommand)
+	collect = func(commands []schemaCommand) {
+		for _, command := range commands {
+			paths[command.Path] = command
+			collect(command.Commands)
+		}
+	}
+	collect(document.Commands)
+
+	for _, path := range []string{"jf status", "jf login", "jf logout", "jf device list", "jf device revoke", "jf cred get", "jf cred set", "jf run", "jf resolve"} {
+		command, found := paths[path]
 		if !found {
-			t.Errorf("the command %q dispatches but has no help entry in commands", name)
+			t.Errorf("the schema has no %q", path)
 			continue
 		}
-		if entry.Name != name {
-			t.Errorf("the help entry under key %q has Name %q", name, entry.Name)
-		}
-		if strings.TrimSpace(entry.Summary) == "" {
-			t.Errorf("the command %q has no summary", name)
-		}
-		if strings.TrimSpace(entry.Description) == "" {
-			t.Errorf("the command %q has no description", name)
-		}
-		if len(entry.Usage) == 0 {
-			t.Errorf("the command %q has no usage line", name)
-		}
-		if len(entry.Examples) == 0 {
-			t.Errorf("the command %q has no example", name)
+		if strings.TrimSpace(command.Summary) == "" {
+			t.Errorf("the schema entry %q has no summary", path)
 		}
 	}
 
-	for name := range commands {
-		found := false
-		for _, dispatched := range dispatchedCommands {
-			if dispatched == name {
-				found = true
-				break
-			}
+	// The positional arguments must reach the schema, or an agent cannot call
+	// the command that needs one.
+	revoke := paths["jf device revoke"]
+	if len(revoke.Arguments) != 1 || revoke.Arguments[0].Name != "NAME" {
+		t.Errorf("got arguments %v for `jf device revoke`, want one named NAME", revoke.Arguments)
+	}
+
+	// So must the flags.
+	credSet := paths["jf cred set"]
+	flagNames := map[string]bool{}
+	for _, flag := range credSet.Flags {
+		flagNames[flag.Name] = true
+	}
+	for _, name := range []string{"identity", "ticket", "stdin"} {
+		if !flagNames[name] {
+			t.Errorf("the schema entry for `jf cred set` has no --%s flag", name)
 		}
-		if !found {
-			t.Errorf("the help entry %q describes a command that main.go does not dispatch", name)
-		}
+	}
+
+	// The deprecated alias is hidden, so a new caller never learns it here.
+	if _, found := paths["jf auth"]; found {
+		t.Error("the schema teaches the deprecated `auth` alias")
 	}
 }
 
-// TestOverviewListsEveryCommand checks that the overview prints every command,
-// not only the ones that a group happens to name.
-func TestOverviewListsEveryCommand(t *testing.T) {
+// The schema is generated from the tree, so it cannot fall behind the tree. This
+// test states that property directly: every visible command in the tree has a
+// schema entry.
+func TestSchemaCannotGoStale(t *testing.T) {
+	root := newTestTree()
 	var out bytes.Buffer
-	printOverview(&out)
-	text := out.String()
-
-	for name := range commands {
-		if !strings.Contains(text, name) {
-			t.Errorf("the overview does not list the command %q", name)
-		}
-	}
-	for name, entry := range commands {
-		if !strings.Contains(text, entry.Summary) {
-			t.Errorf("the overview does not print the summary of %q", name)
-		}
-	}
-	if !strings.Contains(text, "jf help COMMAND") {
-		t.Error("the overview does not point at `jf help COMMAND`")
-	}
-}
-
-// TestEveryCommandIsInAGroup checks that a new command reaches the overview.
-// A command missing from every group would not print, even with a help entry.
-func TestEveryCommandIsInAGroup(t *testing.T) {
-	grouped := map[string]bool{}
-	for _, group := range commandGroups {
-		for _, name := range group.Names {
-			if _, found := commands[name]; !found {
-				t.Errorf("the group %q names %q, which has no help entry", group.Title, name)
-			}
-			if grouped[name] {
-				t.Errorf("the command %q appears in more than one group", name)
-			}
-			grouped[name] = true
-		}
-	}
-	for name := range commands {
-		if !grouped[name] {
-			t.Errorf("the command %q is in no group, so the overview never prints it", name)
-		}
-	}
-}
-
-// TestCommandHelpPrintsTheParts checks the shape of one command page.
-func TestCommandHelpPrintsTheParts(t *testing.T) {
-	var out bytes.Buffer
-	printCommandHelp(&out, commands["login"])
-	text := out.String()
-
-	for _, want := range []string{"USAGE", "FLAGS", "EXAMPLES", "jf login -name macbook", "-device-code"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the login help does not contain %q", want)
-		}
-	}
-	// The description and the notes are prose, so their backticks are stripped.
-	// The closing hint keeps its backticks, because they mark a literal command
-	// that a person types.
-	if strings.Contains(text, "`jf login` signs") {
-		t.Error("the description still carries the backticks from the source text")
-	}
-	if !strings.Contains(text, "jf login signs this machine in") {
-		t.Error("the description did not print as plain prose")
-	}
-}
-
-// TestCommandHelpRendersEveryCommand checks that no command page panics or
-// comes out empty.
-func TestCommandHelpRendersEveryCommand(t *testing.T) {
-	for name, entry := range commands {
-		var out bytes.Buffer
-		printCommandHelp(&out, entry)
-		if out.Len() == 0 {
-			t.Errorf("the help for %q is empty", name)
-		}
-		if !strings.Contains(out.String(), "jf "+name) {
-			t.Errorf("the help for %q does not name the command", name)
-		}
-	}
-}
-
-func TestIsHelpRequest(t *testing.T) {
-	for _, args := range [][]string{{"help"}, {"--help"}, {"-h"}, {"-help"}} {
-		if !isHelpRequest(args) {
-			t.Errorf("%v should ask for the overview", args)
-		}
-	}
-	for _, args := range [][]string{{"help", "login"}, {"status"}, {}} {
-		if isHelpRequest(args) {
-			t.Errorf("%v should not ask for the overview", args)
-		}
-	}
-}
-
-func TestWantsCommandHelpStopsAtDoubleDash(t *testing.T) {
-	if !wantsCommandHelp([]string{"-h"}) {
-		t.Error("-h asks for the command help")
-	}
-	if !wantsCommandHelp([]string{"gog", "--help"}) {
-		t.Error("--help asks for the command help")
-	}
-	// Everything after `--` belongs to the child command, so `jf run -- gog -h`
-	// asks gog for its help, not jf.
-	if wantsCommandHelp([]string{"--", "gog", "-h"}) {
-		t.Error("an -h after -- belongs to the child command")
-	}
-}
-
-func TestUnknownCommandErrorSuggestsTheClosestName(t *testing.T) {
-	err := unknownCommandError("devcies")
-	if !strings.Contains(err.Error(), "jf devices") {
-		t.Errorf("a near miss should suggest the command, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "jf help") {
-		t.Errorf("every unknown command should point at jf help, got %v", err)
-	}
-
-	// A word that resembles nothing gets the command list, not a wrong guess.
-	far := unknownCommandError("photosynthesis")
-	if strings.Contains(far.Error(), "Did you mean") {
-		t.Errorf("a distant word should not get a suggestion, got %v", far)
-	}
-}
-
-func TestRunHelpAnswersBothForms(t *testing.T) {
-	var overview bytes.Buffer
-	if err := runHelp(&overview, nil); err != nil {
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"schema", "--json"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(overview.String(), "WORKSPACE COMMANDS") {
-		t.Error("`jf help` should print the overview")
-	}
 
-	var page bytes.Buffer
-	if err := runHelp(&page, []string{"creds"}); err != nil {
+	var document schemaDocument
+	if err := json.Unmarshal(out.Bytes(), &document); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(page.String(), "jf creds get") {
-		t.Error("`jf help creds` should print the creds page")
+	described := map[string]bool{}
+	var collect func([]schemaCommand)
+	collect = func(commands []schemaCommand) {
+		for _, command := range commands {
+			described[command.Path] = true
+			collect(command.Commands)
+		}
 	}
+	collect(document.Commands)
 
-	if err := runHelp(&bytes.Buffer{}, []string{"nonsense"}); err == nil {
-		t.Error("`jf help nonsense` should fail")
+	walk(newTestTree(), func(command *cobra.Command) {
+		if command.Hidden || command.Name() == "jf" {
+			return
+		}
+		switch command.Name() {
+		case "help", "completion":
+			return
+		}
+		// A command under a hidden or framework parent is out of scope too.
+		if parent := command.Parent(); parent != nil && (parent.Hidden || parent.Name() == "completion") {
+			return
+		}
+		if !described[command.CommandPath()] {
+			t.Errorf("the tree has %q but the schema does not describe it", command.CommandPath())
+		}
+	})
+}
+
+func TestSchemaRefusesWithoutTheJSONFlag(t *testing.T) {
+	root := newTestTree()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"schema"})
+	if err := root.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("`jf schema` without --json should fail and say what to run")
 	}
 }
 
-// TestHubActionsMatchTheHelpRegistry checks that the hub dispatch table and the
-// help registry describe the same set of hub commands.
-func TestHubActionsMatchTheHelpRegistry(t *testing.T) {
-	for _, name := range []string{"login", "status", "devices", "creds", "auth"} {
-		if !isHubAction(name) {
-			t.Errorf("%q should be a hub action", name)
-		}
-		if _, found := commands[name]; !found {
-			t.Errorf("the hub action %q has no help entry", name)
+/* ------------------------------------------------------------------ */
+/* jf man                                                              */
+/* ------------------------------------------------------------------ */
+
+// The manual page is generated from the tree, so it must name every command.
+func TestManPageDescribesEveryCommand(t *testing.T) {
+	root := newTestTree()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"man"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	page := out.String()
+	if !strings.HasPrefix(page, ".TH JF 1") {
+		t.Fatalf("the page does not start with a roff title header:\n%.80s", page)
+	}
+	for _, name := range []string{"status", "login", "logout", "device", "cred", "run", "resolve", "schema"} {
+		if !strings.Contains(page, name) {
+			t.Errorf("the manual page does not describe %q", name)
 		}
 	}
-	for _, name := range []string{"run", "resolve", "version", "help"} {
-		if isHubAction(name) {
-			t.Errorf("%q should not be a hub action", name)
+	// The shell completion subtree describes the shell, not jackfield, and it
+	// would be longer than the rest of the page together.
+	if strings.Contains(page, "autocompletion script for bash") {
+		t.Error("the manual page carries the shell completion subtree")
+	}
+	// The deprecated alias must not teach a new reader the old name.
+	if strings.Contains(page, "jf auth") {
+		t.Error("the manual page teaches the deprecated `auth` alias")
+	}
+}
+
+// A help text wraps at 80 columns for a terminal. A manual page must not keep
+// those breaks, because man wraps to the reader's own width.
+func TestJoinParagraphsKeepsParagraphsApart(t *testing.T) {
+	joined := joinParagraphs("one line\nand its wrap\n\na second paragraph\nwrapped too")
+	want := "one line and its wrap\n\na second paragraph wrapped too"
+	if joined != want {
+		t.Fatalf("got %q, want %q", joined, want)
+	}
+}
+
+// TestTheCommittedManPageIsCurrent catches a stale docs/man/jf.1.
+//
+// The page is generated, and both installers ship the committed copy. So a page
+// that falls behind the command tree is a page that describes commands the
+// installed binary does not have. `make man` regenerates it.
+//
+// The test skips when it cannot find the file, so it does not fail a build that
+// runs outside a checkout.
+func TestTheCommittedManPageIsCurrent(t *testing.T) {
+	const pagePath = "../../docs/man/jf.1"
+	committed, err := os.ReadFile(pagePath)
+	if err != nil {
+		t.Skipf("no committed manual page to check: %v", err)
+	}
+
+	root := newTestTree()
+	var generated bytes.Buffer
+	root.SetOut(&generated)
+	root.SetErr(&generated)
+	root.SetArgs([]string{"man"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The page carries the date it was built, so a copy generated on a later day
+	// differs by that one line and nothing else. Comparing the rest keeps the
+	// test from failing every midnight.
+	if withoutTitleLine(generated.String()) != withoutTitleLine(string(committed)) {
+		t.Errorf("%s is behind the command tree. Run `make man` and commit the result.", pagePath)
+	}
+}
+
+// withoutTitleLine drops the .TH line, which carries the build date.
+func withoutTitleLine(page string) string {
+	lines := strings.Split(page, "\n")
+	for index, line := range lines {
+		if strings.HasPrefix(line, ".TH ") {
+			return strings.Join(append(lines[:index:index], lines[index+1:]...), "\n")
 		}
 	}
+	return page
 }

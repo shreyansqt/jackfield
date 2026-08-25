@@ -131,6 +131,9 @@ func newTestEnvironment(t *testing.T, fake *commandHub, stdin string) *testEnvir
 	t.Setenv(hub.EnvBaseURL, fake.server.URL)
 	t.Setenv("JF_TOKEN_FILE", tokenPath)
 	t.Setenv("JF_CACHE_DIR", cacheDir)
+	// The manifest search would otherwise walk up into this checkout and find
+	// the repository's own jackfield.yaml, which points at the real hub.
+	t.Setenv("JF_CONFIG", filepath.Join(home, "jackfield.yaml"))
 
 	environment := &testEnvironment{
 		stdout:    &bytes.Buffer{},
@@ -162,6 +165,20 @@ func (environment *testEnvironment) signIn(t *testing.T) {
 	}
 }
 
+// execute runs one command line through the real command tree.
+//
+// The tests drive the tree rather than the run functions underneath it, so they
+// cover the wiring that a person actually meets: the command names, the flag
+// names, and the argument counts.
+func (environment *testEnvironment) execute(t *testing.T, args ...string) error {
+	t.Helper()
+	root := newRootCommand(environment.hubEnvironment)
+	root.SetArgs(args)
+	root.SetOut(environment.stdout)
+	root.SetErr(environment.stderr)
+	return root.ExecuteContext(context.Background())
+}
+
 /* ------------------------------------------------------------------ */
 /* jf login                                                            */
 /* ------------------------------------------------------------------ */
@@ -170,7 +187,7 @@ func TestLoginOpensTheBrowserAndSavesTheToken(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
 
-	if err := runLogin(context.Background(), environment.hubEnvironment, nil); err != nil {
+	if err := environment.execute(t, "login"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -204,7 +221,7 @@ func TestLoginWithDeviceCodeOpensNoBrowser(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
 
-	if err := runLogin(context.Background(), environment.hubEnvironment, []string{"--device-code"}); err != nil {
+	if err := environment.execute(t, "login", "--device-code"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,7 +246,7 @@ func TestLoginWithoutADisplayOpensNoBrowser(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.HasDisplay = func() bool { return false }
 
-	if err := runLogin(context.Background(), environment.hubEnvironment, nil); err != nil {
+	if err := environment.execute(t, "login"); err != nil {
 		t.Fatal(err)
 	}
 	if len(environment.openedURLs) != 0 {
@@ -243,7 +260,7 @@ func TestLoginWithBrowserFlagOverridesTheDisplayCheck(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.HasDisplay = func() bool { return false }
 
-	if err := runLogin(context.Background(), environment.hubEnvironment, []string{"--browser"}); err != nil {
+	if err := environment.execute(t, "login", "--browser"); err != nil {
 		t.Fatal(err)
 	}
 	if len(environment.openedURLs) != 1 {
@@ -265,7 +282,7 @@ func TestLoginPollsUntilThePersonApproves(t *testing.T) {
 		}
 	}
 
-	if err := runLogin(context.Background(), environment.hubEnvironment, nil); err != nil {
+	if err := environment.execute(t, "login"); err != nil {
 		t.Fatal(err)
 	}
 	if fake.tokenPolls != 4 {
@@ -280,7 +297,7 @@ func TestLoginRefusesBothFlowFlagsTogether(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
 
-	err := runLogin(context.Background(), environment.hubEnvironment, []string{"--device-code", "--browser"})
+	err := environment.execute(t, "login", "--device-code", "--browser")
 	if err == nil {
 		t.Fatal("expected an error for two conflicting flags")
 	}
@@ -305,7 +322,7 @@ func TestStatusRendersThePanel(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runStatus(context.Background(), environment.hubEnvironment, nil); err != nil {
+	if err := environment.execute(t, "status"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -325,7 +342,7 @@ func TestStatusWithoutATokenAsksForLogin(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
 
-	err := runStatus(context.Background(), environment.hubEnvironment, nil)
+	err := environment.execute(t, "status")
 	if err == nil {
 		t.Fatal("expected an error on a machine with no device token")
 	}
@@ -343,7 +360,7 @@ func TestDevicesListsEveryMachine(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runDevices(context.Background(), environment.hubEnvironment, nil); err != nil {
+	if err := environment.execute(t, "device", "list"); err != nil {
 		t.Fatal(err)
 	}
 	output := environment.stdout.String()
@@ -362,7 +379,7 @@ func TestDevicesRevokeResolvesTheNameToADeviceID(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runDevices(context.Background(), environment.hubEnvironment, []string{"revoke", "grumpyorange"}); err != nil {
+	if err := environment.execute(t, "device", "revoke", "grumpyorange"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.revokedDeviceIDs) != 1 || fake.revokedDeviceIDs[0] != "bbb" {
@@ -380,7 +397,7 @@ func TestDevicesRevokeSaysWhenItWasThisMachine(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runDevices(context.Background(), environment.hubEnvironment, []string{"revoke", "macbook"}); err != nil {
+	if err := environment.execute(t, "device", "revoke", "macbook"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(environment.stdout.String(), "jf login") {
@@ -393,7 +410,7 @@ func TestDevicesRevokeRejectsAnUnknownName(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	err := runDevices(context.Background(), environment.hubEnvironment, []string{"revoke", "no-such-machine"})
+	err := environment.execute(t, "device", "revoke", "no-such-machine")
 	if err == nil {
 		t.Fatal("expected an error for an unknown machine")
 	}
@@ -407,7 +424,7 @@ func TestDevicesRevokeNeedsAName(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runDevices(context.Background(), environment.hubEnvironment, []string{"revoke"}); err == nil {
+	if err := environment.execute(t, "device", "revoke"); err == nil {
 		t.Fatal("expected an error when no machine is named")
 	}
 }
@@ -423,7 +440,7 @@ func TestCredsGetPrintsOnlyTheSecret(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 	if got := environment.stdout.String(); got != "xoxp-from-the-hub\n" {
@@ -436,7 +453,7 @@ func TestCredsGetCachesTheCredential(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -444,7 +461,7 @@ func TestCredsGetCachesTheCredential(t *testing.T) {
 	// lifetime must still return the cached one, which proves it did not ask.
 	fake.credential.Secret = "xoxp-changed-at-the-hub"
 	environment.stdout.Reset()
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 	if got := environment.stdout.String(); got != "xoxp-from-the-hub\n" {
@@ -460,14 +477,14 @@ func TestCredsGetAsksTheHubAgainAfterTheCacheExpires(t *testing.T) {
 	clock := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	environment.Now = func() time.Time { return clock }
 
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 
 	fake.credential.Secret = "xoxp-changed-at-the-hub"
 	clock = clock.Add(hub.CacheTTL + time.Second)
 	environment.stdout.Reset()
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 	if got := environment.stdout.String(); got != "xoxp-changed-at-the-hub\n" {
@@ -480,13 +497,13 @@ func TestCredsGetWithNoCacheAlwaysAsksTheHub(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 
 	fake.credential.Secret = "xoxp-changed-at-the-hub"
 	environment.stdout.Reset()
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"--no-cache", "get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "--no-cache", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 	if got := environment.stdout.String(); got != "xoxp-changed-at-the-hub\n" {
@@ -499,7 +516,7 @@ func TestCredsGetNeedsAConnectionName(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get"}); err == nil {
+	if err := environment.execute(t, "cred", "get"); err == nil {
 		t.Fatal("expected an error when no connection is named")
 	}
 }
@@ -513,8 +530,7 @@ func TestAuthSendsTheSecretWithTheApprovalTicket(t *testing.T) {
 	// The person pastes the ticket at the prompt.
 	environment := newTestEnvironment(t, fake, "the-approval-ticket\n")
 
-	err := runAuth(context.Background(), environment.hubEnvironment,
-		[]string{"--identity", "shreyans@example.com", "slack-smarta"})
+	err := environment.execute(t, "cred", "set", "--identity", "shreyans@example.com", "slack-smarta")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,8 +590,7 @@ func TestAuthReadsTheSecretFromStandardInput(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "xoxp-piped-in\n")
 
-	err := runAuth(context.Background(), environment.hubEnvironment,
-		[]string{"--ticket", "the-approval-ticket", "--stdin", "slack-smarta"})
+	err := environment.execute(t, "cred", "set", "--ticket", "the-approval-ticket", "--stdin", "slack-smarta")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +609,7 @@ func TestAuthClearsTheCachedCredential(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	environment.signIn(t)
 
-	if err := runCreds(context.Background(), environment.hubEnvironment, []string{"get", "slack-smarta"}); err != nil {
+	if err := environment.execute(t, "cred", "get", "slack-smarta"); err != nil {
 		t.Fatal(err)
 	}
 	// The same frozen clock as the command, so the entry is inside its lifetime.
@@ -605,8 +620,7 @@ func TestAuthClearsTheCachedCredential(t *testing.T) {
 	}
 
 	environment.Stdin = strings.NewReader("xoxp-new\n")
-	err := runAuth(context.Background(), environment.hubEnvironment,
-		[]string{"--ticket", "the-approval-ticket", "--stdin", "slack-smarta"})
+	err := environment.execute(t, "cred", "set", "--ticket", "the-approval-ticket", "--stdin", "slack-smarta")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,8 +633,7 @@ func TestAuthRefusesAnEmptySecret(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
 
-	err := runAuth(context.Background(), environment.hubEnvironment,
-		[]string{"--ticket", "the-approval-ticket", "--stdin", "slack-smarta"})
+	err := environment.execute(t, "cred", "set", "--ticket", "the-approval-ticket", "--stdin", "slack-smarta")
 	if err == nil {
 		t.Fatal("expected an error for an empty secret")
 	}
@@ -633,7 +646,7 @@ func TestAuthRefusesWhenNoTicketIsGiven(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "\n")
 
-	err := runAuth(context.Background(), environment.hubEnvironment, []string{"slack-smarta"})
+	err := environment.execute(t, "cred", "set", "slack-smarta")
 	if err == nil {
 		t.Fatal("expected an error when the person gives no approval ticket")
 	}
@@ -646,7 +659,7 @@ func TestAuthNeedsAConnectionName(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
 
-	if err := runAuth(context.Background(), environment.hubEnvironment, nil); err == nil {
+	if err := environment.execute(t, "cred", "set"); err == nil {
 		t.Fatal("expected an error when no connection is named")
 	}
 }
@@ -655,24 +668,28 @@ func TestAuthNeedsAConnectionName(t *testing.T) {
 /* dispatch                                                            */
 /* ------------------------------------------------------------------ */
 
-func TestHubActionsAreRecognised(t *testing.T) {
-	for _, action := range []string{"login", "status", "devices", "creds", "auth"} {
-		if !isHubAction(action) {
-			t.Fatalf("%q must be a hub action", action)
-		}
-	}
-	for _, action := range []string{"run", "resolve"} {
-		if isHubAction(action) {
-			t.Fatalf("%q must stay a local action", action)
-		}
+func TestUnknownCommandFails(t *testing.T) {
+	fake := newCommandHub(t)
+	environment := newTestEnvironment(t, fake, "")
+	if err := environment.execute(t, "nonsense"); err == nil {
+		t.Fatal("expected an error for an unknown command")
 	}
 }
 
-func TestRunHubActionRejectsAnUnknownAction(t *testing.T) {
+// The old name keeps working, so yesterday's documents do not hard-break.
+func TestAuthStillRunsAsTheAliasOfCredSet(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
-	if err := runHubAction(context.Background(), environment.hubEnvironment, "nonsense", nil); err == nil {
-		t.Fatal("expected an error for an unknown action")
+
+	err := environment.execute(t, "auth", "--ticket", "the-approval-ticket", "--stdin", "slack-smarta")
+	if err == nil {
+		// An empty secret is the expected failure here, because the stdin of
+		// this environment is empty. The point of the test is that the command
+		// still dispatches to the write path at all.
+		t.Fatal("expected the empty-secret error, which proves the alias reached `cred set`")
+	}
+	if !strings.Contains(err.Error(), "secret is empty") {
+		t.Fatalf("got %q, want the alias to reach the `cred set` write path", err)
 	}
 }
 
@@ -681,9 +698,11 @@ func TestRunHubActionRejectsAnUnknownAction(t *testing.T) {
 func TestLoginWorksWithNoManifest(t *testing.T) {
 	fake := newCommandHub(t)
 	environment := newTestEnvironment(t, fake, "")
-	environment.ManifestPath = ""
+	// A directory with no jackfield.yaml above it, so the search finds nothing.
+	t.Setenv("JF_CONFIG", "")
+	t.Chdir(t.TempDir())
 
-	if err := runLogin(context.Background(), environment.hubEnvironment, nil); err != nil {
+	if err := environment.execute(t, "login"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := hub.LoadToken(environment.tokenPath); err != nil {
@@ -703,9 +722,9 @@ func TestHubAddressComesFromTheManifest(t *testing.T) {
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	environment.ManifestPath = manifestPath
+	t.Setenv("JF_CONFIG", manifestPath)
 
-	if err := runLogin(context.Background(), environment.hubEnvironment, nil); err != nil {
+	if err := environment.execute(t, "login"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := hub.LoadToken(environment.tokenPath); err != nil {

@@ -33,7 +33,7 @@ profiles:
     prefix_args: [-a, shreyans.jain@smarta-steuern.de, --no-input]
     denied_args: [-a, --account, --access-token, --client, --home]
     unset_env: [GOG_ACCESS_TOKEN, GOG_ACCOUNT, GOG_CLIENT, GOG_HOME]
-    interactive:
+    subcommand_overrides:
       - subcommand: [auth, add]
         drop_prefix_args: [--no-input]
         identity: shreyans.jain@smarta-steuern.de
@@ -43,7 +43,7 @@ profiles:
     prefix_args: [-a, shreyansqt@gmail.com, --no-input]
     denied_args: [-a, --account, --access-token, --client, --home]
     unset_env: [GOG_ACCESS_TOKEN, GOG_ACCOUNT, GOG_CLIENT, GOG_HOME]
-    interactive:
+    subcommand_overrides:
       - subcommand: [auth, add]
         drop_prefix_args: [--no-input]
         identity: shreyansqt@gmail.com
@@ -53,12 +53,24 @@ profiles:
     prefix_args: [exec, node@23, --, wrangler, --profile, default]
     denied_args: [--profile]
     unset_env: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_API_KEY, CLOUDFLARE_EMAIL, CLOUDFLARE_ACCOUNT_ID]
+    # wrangler rejects --profile on its account commands. Without these rules the
+    # shim cannot run whoami or login, and the only recovery is an absolute path.
+    subcommand_overrides: &wrangler_account_commands
+      - subcommand: [whoami]
+        drop_prefix_args: [--profile]
+      - subcommand: [login]
+        drop_prefix_args: [--profile]
+      - subcommand: [logout]
+        drop_prefix_args: [--profile]
+      - subcommand: [auth]
+        drop_prefix_args: [--profile]
 
   wrangler-personal:
     executable: /Users/shreyans/.local/bin/mise
     prefix_args: [exec, node@23, --, wrangler, --profile, personal]
     denied_args: [--profile]
     unset_env: [CLOUDFLARE_API_TOKEN, CLOUDFLARE_API_KEY, CLOUDFLARE_EMAIL, CLOUDFLARE_ACCOUNT_ID]
+    subcommand_overrides: *wrangler_account_commands
 
   aws-smarta-staging:
     executable: /opt/homebrew/bin/aws

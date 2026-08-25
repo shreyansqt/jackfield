@@ -212,12 +212,28 @@ func gogProfile() Profile {
 		Executable: "/bin/gog",
 		PrefixArgs: []string{"-a", "pinned@example.com", "--no-input"},
 		DeniedArgs: []string{"-a", "--account", "--access-token", "--client", "--home"},
-		Interactive: []Interactive{
+		SubcommandOverrides: []SubcommandOverride{
 			{
 				Subcommand:     []string{"auth", "add"},
 				DropPrefixArgs: []string{"--no-input"},
 				Identity:       "pinned@example.com",
 			},
+		},
+	}
+}
+
+// wranglerProfile mirrors the real wrangler profiles. The identity is a valued
+// flag in the prefix, which is what separates this case from the gog one.
+func wranglerProfile() Profile {
+	return Profile{
+		Executable: "/bin/mise",
+		PrefixArgs: []string{"exec", "node@23", "--", "wrangler", "--profile", "default"},
+		DeniedArgs: []string{"--profile"},
+		SubcommandOverrides: []SubcommandOverride{
+			{Subcommand: []string{"whoami"}, DropPrefixArgs: []string{"--profile"}},
+			{Subcommand: []string{"login"}, DropPrefixArgs: []string{"--profile"}},
+			{Subcommand: []string{"logout"}, DropPrefixArgs: []string{"--profile"}},
+			{Subcommand: []string{"auth"}, DropPrefixArgs: []string{"--profile"}},
 		},
 	}
 }
@@ -275,6 +291,89 @@ func TestLaunchPrefixMatchesSubcommandAfterFlags(t *testing.T) {
 	}
 }
 
+// A wrangler account command must lose the identity flag, and it must lose the
+// flag's value with it. A bare `default` left in the prefix becomes wrangler's
+// subcommand, and the command fails a second way.
+func TestLaunchPrefixDropsValuedIdentityFlagForAccountCommands(t *testing.T) {
+	profile := wranglerProfile()
+	want := []string{"exec", "node@23", "--", "wrangler"}
+	for _, args := range [][]string{
+		{"whoami"},
+		{"login"},
+		{"logout"},
+		{"auth", "status"},
+		{"auth", "create"},
+		{"auth", "keyring", "enable"},
+		{"--experimental-json-config", "whoami"},
+	} {
+		actual, err := profile.launchPrefix(args)
+		if err != nil {
+			t.Fatalf("%v failed: %v", args, err)
+		}
+		if !reflect.DeepEqual(actual, want) {
+			t.Fatalf("%v got prefix %v, want %v", args, actual, want)
+		}
+	}
+}
+
+func TestLaunchPrefixKeepsIdentityFlagForResourceCommands(t *testing.T) {
+	profile := wranglerProfile()
+	for _, args := range [][]string{
+		{"r2", "bucket", "list"},
+		{"deploy"},
+		{"secret", "put", "TOKEN"},
+		{"d1", "execute", "db", "--command", "select 1"},
+		// The rule matches the first subcommand word only. A resource command
+		// that merely mentions `whoami` later keeps its identity.
+		{"kv", "key", "get", "whoami"},
+	} {
+		actual, err := profile.launchPrefix(args)
+		if err != nil {
+			t.Fatalf("%v failed: %v", args, err)
+		}
+		if !reflect.DeepEqual(actual, profile.PrefixArgs) {
+			t.Fatalf("%v got prefix %v, want %v", args, actual, profile.PrefixArgs)
+		}
+	}
+}
+
+// Suppressing the prefix flag must not let the child supply its own. Otherwise
+// the rule that unblocks `wrangler whoami` also opens a hole in every command it
+// matches.
+func TestLaunchPrefixKeepsDeniedArgsForAccountCommands(t *testing.T) {
+	profile := wranglerProfile()
+	for _, args := range [][]string{
+		{"whoami", "--profile", "other"},
+		{"login", "--profile=other"},
+		{"auth", "status", "--profile", "other"},
+	} {
+		if _, err := profile.launchPrefix(args); err == nil || !strings.Contains(err.Error(), "override the selected identity") {
+			t.Fatalf("expected %v to be denied, got %v", args, err)
+		}
+	}
+}
+
+// The gog profiles have no valued flag to drop. This guards the shared
+// removeArgs change against breaking the rule it was written for.
+func TestLaunchPrefixLeavesGogProfilesUnchanged(t *testing.T) {
+	actual, err := gogProfile().launchPrefix([]string{"auth", "add", "pinned@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-a", "pinned@example.com"}
+	if !reflect.DeepEqual(actual, want) {
+		t.Fatalf("got %v, want %v", actual, want)
+	}
+}
+
+func TestRemoveArgsDropsJoinedFlagValue(t *testing.T) {
+	actual := removeArgs([]string{"wrangler", "--profile=default", "--no-input"}, []string{"--profile"})
+	want := []string{"wrangler", "--no-input"}
+	if !reflect.DeepEqual(actual, want) {
+		t.Fatalf("got %v, want %v", actual, want)
+	}
+}
+
 func TestLoadAcceptsInteractiveRules(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(t.TempDir(), "jackfield.yaml")
@@ -302,20 +401,72 @@ profiles:
 	if err != nil {
 		t.Fatal(err)
 	}
-	rules := config.Profiles["gog-work"].Interactive
+	rules := config.Profiles["gog-work"].Overrides()
 	if len(rules) != 1 || rules[0].Identity != "pinned@example.com" {
-		t.Fatalf("unexpected interactive rules: %+v", rules)
+		t.Fatalf("unexpected subcommand overrides: %+v", rules)
 	}
 }
 
-func TestValidateRejectsInteractiveRuleWithoutSubcommand(t *testing.T) {
+// subcommand_overrides is the documented key. interactive is the name it had
+// first, and a machine may still run an older manifest, so both must parse.
+func TestLoadAcceptsSubcommandOverrides(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "jackfield.yaml")
+	manifest := fmt.Sprintf(`version: 1
+workspaces:
+  work:
+    roots: [%q]
+    commands:
+      wrangler:
+        profiles: [wrangler-work]
+profiles:
+  wrangler-work:
+    executable: /bin/wrangler
+    prefix_args: [--profile, default]
+    denied_args: [--profile]
+    subcommand_overrides:
+      - subcommand: [whoami]
+        drop_prefix_args: [--profile]
+`, root)
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := Load(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := config.Profiles["wrangler-work"].Overrides()
+	if len(rules) != 1 || !reflect.DeepEqual(rules[0].Subcommand, []string{"whoami"}) {
+		t.Fatalf("unexpected subcommand overrides: %+v", rules)
+	}
+}
+
+func TestValidateRejectsOverrideWithoutSubcommand(t *testing.T) {
 	config := testConfig(t.TempDir())
 	config.Profiles["gog-work"] = Profile{
-		Executable:  "/bin/gog",
-		Interactive: []Interactive{{Identity: "pinned@example.com"}},
+		Executable:          "/bin/gog",
+		SubcommandOverrides: []SubcommandOverride{{Identity: "pinned@example.com"}},
 	}
 	if err := config.validate(); err == nil || !strings.Contains(err.Error(), "without a subcommand") {
 		t.Fatalf("expected a missing subcommand error, got %v", err)
+	}
+}
+
+// A rule that drops an argument the prefix never had does nothing, and the
+// command it was written for still fails. That is a typo, so the manifest must
+// not load.
+func TestValidateRejectsOverrideThatDropsAnAbsentPrefixArg(t *testing.T) {
+	config := testConfig(t.TempDir())
+	config.Profiles["wrangler-work"] = Profile{
+		Executable: "/bin/wrangler",
+		PrefixArgs: []string{"--profile", "default"},
+		SubcommandOverrides: []SubcommandOverride{
+			{Subcommand: []string{"whoami"}, DropPrefixArgs: []string{"--prof1le"}},
+		},
+	}
+	if err := config.validate(); err == nil || !strings.Contains(err.Error(), "not in its prefix_args") {
+		t.Fatalf("expected an absent prefix argument error, got %v", err)
 	}
 }
 

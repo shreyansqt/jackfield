@@ -237,7 +237,7 @@ Replace `YOUR-HUB` with your hostname and `$TOKEN` with a device token.
 Writing needs a fresh browser approval every time. First get an approval
 ticket.
 
-**In a browser**, which is what `jf auth` opens:
+**In a browser**, which is what `jf cred set` opens:
 
 ```
 https://YOUR-HUB/ui/approvals?connection=slack-work

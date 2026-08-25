@@ -8,3 +8,6 @@ secrets.yaml
 *.age
 keys.txt
 .env
+
+# The `make build` output.
+build/

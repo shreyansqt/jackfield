@@ -3,192 +3,146 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 
-	"github.com/shreyansqt/jackfield/internal/runner"
+	"github.com/charmbracelet/fang"
 )
 
 func main() {
-	args, err := commandArgs(filepath.Base(os.Args[0]), os.Args[1:])
-	if err == nil {
-		err = run(args)
-	}
-	if err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			os.Exit(exitError.ExitCode())
+	program := filepath.Base(os.Args[0])
+
+	// A shim runs the runner directly and never reaches cobra.
+	//
+	// The shims are symbolic links named gog, wrangler, and aws. A person who
+	// types `wrangler r2 bucket list` means that tool, not a jf subcommand, so
+	// the argument list must not pass through a flag parser that would read
+	// `--help` or `--version` as its own. The rewrite below turns the call into
+	// the `jf run` that it means, and calls the runner with it.
+	if isShim(program) {
+		shimArgs, err := commandArgs(program, os.Args[1:])
+		if err == nil {
+			err = runShim(shimArgs)
 		}
-		fmt.Fprintf(os.Stderr, "jf: %v\n", err)
-		os.Exit(1)
+		fail(err)
+		return
+	}
+
+	environment := defaultHubEnvironment("")
+	root := newRootCommand(environment)
+	if err := fang.Execute(
+		context.Background(),
+		root,
+		fang.WithVersion(versionString()),
+		// jf supplies its own `man` command, with real help text.
+		fang.WithoutManpage(),
+		fang.WithErrorHandler(reportError),
+		fang.WithNotifySignal(os.Interrupt),
+	); err != nil {
+		// The error is already printed. This path only sets the exit status, and
+		// it keeps the child process's status when the failure came from
+		// `jf run`.
+		exit(err)
 	}
 }
 
-func commandArgs(program string, args []string) ([]string, error) {
+// reportError prints a failure, unless the child process already reported it.
+//
+// A tool that `jf run` started writes its own message to its own standard error
+// and then exits. jf adds nothing by printing "Exit status 3" under that: the
+// person has the tool's own words, and the exit status reaches the shell either
+// way. Every other failure is a jf failure, and fang prints it in its own style.
+func reportError(out io.Writer, styles fang.Styles, err error) {
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return
+	}
+	fang.DefaultErrorHandler(out, styles, err)
+}
+
+// fail ends the program when err is not nil.
+func fail(err error) {
+	if err == nil {
+		return
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		os.Exit(exitError.ExitCode())
+	}
+	fmt.Fprintf(os.Stderr, "jf: %v\n", err)
+	os.Exit(1)
+}
+
+// exit ends the program with the right status for an error fang already printed.
+//
+// A failure inside `jf run` carries the child process's exit status, and a script
+// that calls jf reads that status as the tool's own result. Every other failure
+// is a jf failure, and it exits 1.
+func exit(err error) {
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		os.Exit(exitError.ExitCode())
+	}
+	os.Exit(1)
+}
+
+// isShim reports whether this program name is one of the installed shims.
+//
+// The shims are symbolic links to the jf binary, named for the tool they gate.
+// A call as `jf` is not a shim, and it runs the command tree instead.
+func isShim(program string) bool {
 	switch program {
 	case "gog", "wrangler", "aws":
-		result := []string{"run"}
-		if len(args) > 0 && args[0] == "--jf-profile" {
-			if len(args) < 2 || args[1] == "" {
-				return nil, fmt.Errorf("--jf-profile needs a profile name")
-			}
-			result = append(result, "--profile", args[1])
-			args = args[2:]
-		}
-		result = append(result, program)
-		return append(result, args...), nil
+		return true
 	default:
+		return false
+	}
+}
+
+// commandArgs rewrites a shim invocation into the `jf run` that it means.
+//
+// The `--jf-profile NAME` flag is the one jf flag a shim accepts. It must move in
+// front of the tool name, because everything after that name belongs to the tool.
+// So `wrangler r2 bucket list` becomes `run wrangler r2 bucket list`, and `aws
+// --jf-profile P sts get-caller-identity` becomes `run --profile P aws sts
+// get-caller-identity`.
+func commandArgs(program string, args []string) ([]string, error) {
+	if !isShim(program) {
 		return args, nil
 	}
+	result := []string{"run"}
+	if len(args) > 0 && args[0] == "--jf-profile" {
+		if len(args) < 2 || args[1] == "" {
+			return nil, fmt.Errorf("--jf-profile needs a profile name")
+		}
+		result = append(result, "--profile", args[1])
+		args = args[2:]
+	}
+	result = append(result, program)
+	return append(result, args...), nil
 }
 
-func run(args []string) error {
-	// The version and help checks run first. Neither carries a subcommand, and
-	// both must answer on a machine that has no manifest yet.
-	if isVersionRequest(args) {
-		printVersion(os.Stdout)
-		return nil
+// runShim runs one shim call through the runner.
+//
+// It bypasses cobra on purpose. The arguments after the tool name belong to that
+// tool, and a flag parser here would read them as flags of jf.
+func runShim(args []string) error {
+	profile := ""
+	rest := args[1:] // Drop the leading "run".
+	if len(rest) >= 2 && rest[0] == "--profile" {
+		profile = rest[1]
+		rest = rest[2:]
 	}
-	// `jf` with no arguments prints the overview rather than an error. A person
-	// who types the bare name wants to learn what the tool does.
-	if len(args) == 0 || isHelpRequest(args) {
-		printOverview(os.Stdout)
-		return nil
-	}
-
-	global := flag.NewFlagSet("jf", flag.ContinueOnError)
-	global.SetOutput(io.Discard)
-	global.Usage = func() {}
-	configPath := global.String("config", "", "Path to the Jackfield manifest")
-	if err := global.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			printOverview(os.Stdout)
-			return nil
-		}
-		return fmt.Errorf("%w. Run `jf help` to see every command", err)
-	}
-	if global.NArg() == 0 {
-		printOverview(os.Stdout)
-		return nil
+	if len(rest) == 0 {
+		return fmt.Errorf("the shim received no command to run")
 	}
 
-	action := global.Arg(0)
-	actionArgs := global.Args()[1:]
-
-	// `jf help COMMAND` and `jf COMMAND -h` print the same page.
-	if action == "help" {
-		return runHelp(os.Stdout, actionArgs)
-	}
-	entry, known := commands[action]
-	if !known {
-		return unknownCommandError(action)
-	}
-	if wantsCommandHelp(actionArgs) {
-		printCommandHelp(os.Stdout, entry)
-		return nil
-	}
-	if action == "version" {
-		printVersion(os.Stdout)
-		return nil
-	}
-
-	// The hub commands run without a manifest. `jf login` is the first command a
-	// fresh machine runs, before any jackfield.yaml exists there, so a missing
-	// manifest must not stop it. A manifest that is present is still read, for
-	// its hub: key.
-	if isHubAction(action) {
-		manifestPath, _ := findConfig(*configPath)
-		return runHubAction(context.Background(), defaultHubEnvironment(manifestPath), action, actionArgs)
-	}
-
-	manifestPath, err := findConfig(*configPath)
+	resolution, childArgs, err := resolveCommand(func() (string, error) { return findConfig("") }, rest[0], profile, rest[1:])
 	if err != nil {
 		return err
 	}
-	config, err := runner.Load(manifestPath)
-	if err != nil {
-		return err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("read working directory: %w", err)
-	}
-
-	flags := flag.NewFlagSet(action, flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	flags.Usage = func() {}
-	requestedProfile := flags.String("profile", "", "Select one of the profiles that this workspace allows")
-	if err := flags.Parse(actionArgs); err != nil {
-		return fmt.Errorf("%w. Run `jf help %s` to see the flags", err, action)
-	}
-	if flags.NArg() == 0 {
-		return fmt.Errorf("`jf %s` needs a command to act on, for example `jf %s gog whoami`. Run `jf help %s` for more", action, action, action)
-	}
-	commandName := flags.Arg(0)
-	resolution, commandArgs, err := config.ResolveArgs(cwd, commandName, *requestedProfile, flags.Args()[1:])
-	if err != nil {
-		return err
-	}
-
-	switch action {
-	case "resolve":
-		fmt.Printf("workspace=%s command=%s profile=%s executable=%s\n", resolution.Workspace, resolution.Command, resolution.Profile, resolution.Launch.Executable)
-		return nil
-	case "run":
-		return resolution.Exec(commandArgs, os.Environ(), os.Stdin, os.Stdout, os.Stderr)
-	default:
-		return unknownCommandError(action)
-	}
-}
-
-// runHelp answers `jf help` and `jf help COMMAND`.
-func runHelp(out io.Writer, args []string) error {
-	if len(args) == 0 {
-		printOverview(out)
-		return nil
-	}
-	entry, known := commands[args[0]]
-	if !known {
-		return unknownCommandError(args[0])
-	}
-	printCommandHelp(out, entry)
-	return nil
-}
-
-func findConfig(explicit string) (string, error) {
-	if explicit != "" {
-		return explicit, nil
-	}
-	if fromEnv := os.Getenv("JF_CONFIG"); fromEnv != "" {
-		return fromEnv, nil
-	}
-
-	directory, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	for {
-		candidate := filepath.Join(directory, "jackfield.yaml")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			break
-		}
-		directory = parent
-	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		candidate := filepath.Join(home, ".config", "jackfield", "jackfield.yaml")
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("found no jackfield.yaml here or in any parent directory, and none in ~/.config/jackfield/. " +
-		"Write one there, or name a file with --config PATH or the JF_CONFIG environment variable")
+	return resolution.Exec(childArgs, os.Environ(), os.Stdin, os.Stdout, os.Stderr)
 }

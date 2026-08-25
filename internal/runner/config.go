@@ -35,21 +35,46 @@ type CommandSelection struct {
 }
 
 type Profile struct {
-	Executable  string            `yaml:"executable"`
-	PrefixArgs  []string          `yaml:"prefix_args,omitempty"`
-	DeniedArgs  []string          `yaml:"denied_args,omitempty"`
-	Env         map[string]string `yaml:"env,omitempty"`
-	UnsetEnv    []string          `yaml:"unset_env,omitempty"`
-	Interactive []Interactive     `yaml:"interactive,omitempty"`
+	Executable string            `yaml:"executable"`
+	PrefixArgs []string          `yaml:"prefix_args,omitempty"`
+	DeniedArgs []string          `yaml:"denied_args,omitempty"`
+	Env        map[string]string `yaml:"env,omitempty"`
+	UnsetEnv   []string          `yaml:"unset_env,omitempty"`
+
+	// SubcommandOverrides holds the rules that change the prefix for some
+	// subcommands. Interactive is the older name for the same list. Read them
+	// with Overrides rather than either field, because a profile may use either
+	// manifest key.
+	SubcommandOverrides []SubcommandOverride `yaml:"subcommand_overrides,omitempty"`
+	Interactive         []SubcommandOverride `yaml:"interactive,omitempty"`
 }
 
-// Interactive describes one subcommand that must reach a terminal, for example a
-// browser login. The gate drops DropPrefixArgs from the profile prefix, and it
+// SubcommandOverride describes one subcommand that the profile prefix breaks. The
+// gate drops DropPrefixArgs from the profile prefix for that subcommand, and it
 // requires that every identity argument equals Identity.
-type Interactive struct {
+//
+// Two kinds of command need this. A browser login must reach a terminal, so it
+// drops the flag that suppresses prompts, such as gog's --no-input. An account
+// command rejects the identity flag itself, so it drops that flag: `wrangler
+// whoami` fails when it is given --profile.
+type SubcommandOverride struct {
 	Subcommand     []string `yaml:"subcommand"`
 	DropPrefixArgs []string `yaml:"drop_prefix_args,omitempty"`
 	Identity       string   `yaml:"identity,omitempty"`
+}
+
+// Overrides returns the profile's subcommand rules from whichever manifest key
+// carries them. A profile that sets both keys gets both lists, in manifest order.
+func (profile Profile) Overrides() []SubcommandOverride {
+	if len(profile.Interactive) == 0 {
+		return profile.SubcommandOverrides
+	}
+	if len(profile.SubcommandOverrides) == 0 {
+		return profile.Interactive
+	}
+	merged := make([]SubcommandOverride, 0, len(profile.SubcommandOverrides)+len(profile.Interactive))
+	merged = append(merged, profile.SubcommandOverrides...)
+	return append(merged, profile.Interactive...)
 }
 
 type Resolution struct {
@@ -92,13 +117,20 @@ func (config Config) validate() error {
 		if strings.TrimSpace(profile.Executable) == "" {
 			return fmt.Errorf("profile %q has no executable", name)
 		}
-		for _, rule := range profile.Interactive {
+		for _, rule := range profile.Overrides() {
 			if len(rule.Subcommand) == 0 {
-				return fmt.Errorf("profile %q has an interactive rule without a subcommand", name)
+				return fmt.Errorf("profile %q has a subcommand override without a subcommand", name)
 			}
 			for _, word := range rule.Subcommand {
 				if strings.TrimSpace(word) == "" || strings.HasPrefix(word, "-") {
-					return fmt.Errorf("profile %q interactive rule %q needs plain subcommand words", name, strings.Join(rule.Subcommand, " "))
+					return fmt.Errorf("profile %q subcommand override %q needs plain subcommand words", name, strings.Join(rule.Subcommand, " "))
+				}
+			}
+			// A dropped argument that the prefix does not contain is a typo. It
+			// does nothing, and the command it was meant to unblock still fails.
+			for _, dropped := range rule.DropPrefixArgs {
+				if !containsArg(profile.PrefixArgs, dropped) {
+					return fmt.Errorf("profile %q subcommand override %q drops %q, which is not in its prefix_args", name, strings.Join(rule.Subcommand, " "), dropped)
 				}
 			}
 		}

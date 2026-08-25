@@ -39,6 +39,17 @@ func SaveToken(path string, token string) error {
 	return nil
 }
 
+// DeleteToken removes the device token file.
+//
+// A file that is already gone is a success, not a failure. `jf logout` asks for
+// a machine with no token, and a machine with no token is in that state.
+func DeleteToken(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("delete %s: %w", path, err)
+	}
+	return nil
+}
+
 // LoadToken reads the device token from path.
 //
 // It refuses a token file that other users can read. A leaked device token reads
