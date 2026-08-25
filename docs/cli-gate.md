@@ -421,3 +421,98 @@ you already have one.
 The ticket works once, for that one connection, for five minutes. The secret
 never passes through the browser: only the ticket does, and the secret goes
 straight from this machine to the hub.
+
+### Install a credential into its local tool
+
+Some credentials are more than a value a script reads. A gog credential is a
+Google refresh token that the gog CLI must hold in its own keyring before any
+gog command works. `jf cred install` fetches that durable secret and hands it to
+the tool.
+
+```sh
+jf cred install gog-personal
+```
+
+Reading needs a device token, so run `jf login` first. The install writes
+nothing back to the hub.
+
+For `gog-personal`, jf fetches the credential, parses the JSON it holds, and runs
+`gog auth import --refresh-token-stdin -a shreyansqt@gmail.com`. The refresh
+token goes to gog on standard input, never as an argument, so it never reaches
+the process list. gog refreshes its own access tokens from that refresh token
+afterwards; the hub mints no Google token.
+
+`jf cred install` calls the **real** gog binary directly, never the gog shim,
+because the import passes `-a` and `--client` and the shim denies both. It finds
+the real binary in this order: `GOG_BIN` if set, then `/opt/homebrew/bin/gog`,
+then gog on PATH — skipping any PATH entry that resolves to the jf binary, since
+every shim is a symlink to jf. If the only gog it can find is the shim, it stops
+with a clear error and asks you to set `GOG_BIN`.
+
+Only a credential that needs local tool setup has an installer. Everything else
+is `jf cred get`.
+
+### The gog-personal credential shape
+
+The hub stores one opaque string per connection. A gog credential needs several
+fields, so a small JSON object rides inside that string:
+
+```json
+{
+  "refresh_token": "1//0...",
+  "email": "shreyansqt@gmail.com",
+  "client": "default",
+  "client_id": "...apps.googleusercontent.com"
+}
+```
+
+The hub never parses this; only the machine does. `refresh_token` is the one
+secret. The hub encrypts and stores the whole string exactly as it does any
+other credential, so no hub code is special-cased for gog.
+
+### Getting the token into the hub
+
+gog cannot be asked to broker a token, but gog v0.31.0 can export the refresh
+token it already holds. `scripts/extract-gog-token.sh` builds the hub JSON:
+
+```sh
+# On a machine that already has the gog-personal token (the MacBook):
+scripts/extract-gog-token.sh shreyansqt@gmail.com \
+  | jf cred set --stdin --ticket <TICKET> --identity shreyansqt@gmail.com gog-personal
+```
+
+The script runs `gog auth tokens export`, reshapes the result into the hub JSON,
+and prints it. It never prints the token to the terminal on its own.
+
+On a machine with no stored token, use the isolated re-auth flow. It runs
+`gog auth add` into a throwaway `GOG_HOME` with the file keyring backend, exports
+from there, and wipes the temp dir:
+
+```sh
+GOG_KEYRING_PASSWORD=<throwaway> \
+  scripts/extract-gog-token.sh --reauth shreyansqt@gmail.com \
+  | jf cred set --stdin --ticket <TICKET> --identity shreyansqt@gmail.com gog-personal
+```
+
+The Google OAuth app is unpublished, so the refresh token expires about weekly.
+Centralising in the hub makes that one weekly re-auth on one machine, not one per
+machine: run the extract script, `jf cred set gog-personal`, and every other
+machine imports the new token on its next `jf cred install`.
+
+### Setting up gog-personal on the Mac mini (grumpyorange)
+
+The `chhotu` agent on the mini reaches the personal Google account through the
+same `gog-personal` identity the MacBook uses. Steps on the mini:
+
+1. Install `jf` and the shims (the two installers in this document).
+2. `jf login` to sign the mini in to the hub as its own device.
+3. Point the `chhotu` workspace root in `jackfield.yaml` at chhotu's actual
+   working directory. The stanza is already in the manifest with a placeholder
+   root; a wrong root only makes `jf run gog` there say "this directory is in no
+   workspace", never picks a wrong identity.
+4. `jf cred install gog-personal` to import the refresh token from the hub into
+   gog on the mini.
+
+The mini never re-authorises with Google on its own. When the weekly token is
+refreshed on any machine and written with `jf cred set`, the mini picks it up on
+its next `jf cred install gog-personal`.

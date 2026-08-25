@@ -323,7 +323,96 @@ mints grants directly.
 
 Nothing about the current format has to change to allow that. It is not built.
 
-## 8. What Phase 1 does not do
+## 8. The gog credential: a vault, not a broker
+
+The first real credential in the hub is `gog-personal`, the Google account for
+shreyansqt@gmail.com. It sets the pattern for every tool credential that
+follows: **the hub stores the smallest durable secret, and the tool mints its
+own live tokens.** The hub never issues a Google access token.
+
+### The stored shape reuses the opaque string
+
+The hub value is one opaque string per connection, and it stays that way. A gog
+credential needs more than one field, so a small JSON object rides inside that
+string:
+
+```json
+{
+  "refresh_token": "1//0...",
+  "email": "shreyansqt@gmail.com",
+  "client": "default",
+  "client_id": "...apps.googleusercontent.com"
+}
+```
+
+The hub never parses this. It encrypts and stores the string exactly as it does
+a Slack token, so no hub code changed for gog. Only the machine parses it. The
+refresh token is the one secret; `email` and `client` keep the gog import
+unambiguous, and `client_id` is provenance metadata the import does not need.
+
+Reusing the string keeps every existing property: AES-GCM at rest, the
+connection name as additional authenticated data, and the read/write split of
+section 3. A richer typed shape in KV would have bought nothing and forced a
+schema change.
+
+### The machine imports, the hub does not broker
+
+`jf cred install gog-personal` fetches the credential with a device token,
+parses the JSON, and runs:
+
+```
+gog auth import --refresh-token-stdin -a shreyansqt@gmail.com --client default
+```
+
+with the refresh token on standard input, never in the argument vector. gog then
+refreshes its own access tokens from that refresh token, with no further call to
+the hub. The install writes nothing back to the hub.
+
+`jf cred install` calls the **real** gog binary directly, never the jackfield
+shim. The import must pass `-a <email>` and `--client`, and the shim's gog
+profile denies both, so a shim on PATH makes the import fail with "argument -a
+can override the selected identity". jf resolves the real binary in the same
+order as the extract script: `GOG_BIN` when set, else `/opt/homebrew/bin/gog`,
+else gog on PATH — but it rejects any PATH candidate that resolves to the jf
+binary, because every shim is a symlink back to jf. The direct path also works on
+a machine that has no manifest yet, which is the state a fresh machine is in.
+
+### Getting the token into the hub the first time
+
+gog v0.31.0 has `gog auth tokens export <email> --out <file>`, which reads the
+refresh token this machine already holds in its keyring and writes it to a
+plaintext file (mode 0600) shaped as:
+
+```json
+{"email":"...","client":"default","created_at":"...","refresh_token":"1//0..."}
+```
+
+So on a machine that already has the token — the MacBook — no re-auth is needed:
+`scripts/extract-gog-token.sh <email>` runs the export, reshapes it to the hub
+convention, and prints it for `jf cred set --stdin`.
+
+A machine with **no** stored token — a fresh mini — uses the isolated re-auth
+flow instead (`--reauth`): the script points `GOG_HOME` at a throwaway temp dir,
+sets `keyring_backend=file` and a throwaway `GOG_KEYRING_PASSWORD`, runs
+`gog auth add` there (one browser sign-in), exports from that dir, then wipes it.
+Nothing touches the machine's real keyring.
+
+The whole extract-to-hub path was verified end to end with a **dummy** refresh
+token in an isolated `GOG_HOME`: import wrote the file keyring, export read it
+back byte-for-byte, and the reshape produced the exact JSON that
+`jf cred install` parses. No real Google account was contacted in that test.
+
+### The weekly re-auth, and why the OAuth app stays unpublished
+
+The Google OAuth app is in testing mode, so the refresh token expires about
+weekly. Publishing the app removes that expiry, but that is parked (issue #13
+scope note). Centralising in the hub already turns a per-machine weekly re-auth
+into **one** weekly re-auth on any one machine: run the extract script, then
+`jf cred set gog-personal`, and every other machine picks up the new token on
+its next `jf cred install` (or within the five-minute cache lifetime for a plain
+read). The mini never re-auths on its own; it imports what the hub holds.
+
+## 9. What Phase 1 does not do
 
 - **No MCP endpoint.** That is Phase 2. `src/index.ts` marks the place, and
   lists the three things it needs.

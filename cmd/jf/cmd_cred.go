@@ -39,6 +39,7 @@ present when it happens, so a write costs one browser approval.`,
 	group.AddCommand(
 		newCredGetCommand(environment, manifest),
 		newCredSetCommand(environment, manifest),
+		newCredInstallCommand(environment, manifest),
 	)
 	return group
 }

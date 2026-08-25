@@ -32,6 +32,10 @@ type hubEnvironment struct {
 	Now func() time.Time
 	// Hostname names this machine when `jf login` asks for a device name.
 	Hostname func() (string, error)
+	// LookGog finds the real gog binary for `jf cred install gog-personal`. A
+	// test replaces it to point at a stub, so the install path runs with no real
+	// gog and no real account. When nil, jf looks up gog on PATH.
+	LookGog func() (string, error)
 
 	// Theme paints the output. It is resolved once, on first use, from the
 	// output stream and the environment.
