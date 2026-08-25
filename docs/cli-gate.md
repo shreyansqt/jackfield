@@ -103,6 +103,79 @@ A command without a profile must fail instead of silently selecting either accou
 The launcher removes known ambient credential variables. It also rejects flags such as
 `--profile`, `--account`, and `--access-token` after it selects an identity.
 
+## Scope by agent, not only by directory
+
+The gate above scopes identity by directory: the workspace that owns the current
+directory decides the profile. That fails for a harness whose agents are told apart
+by profile, not by path. On the Mac mini, Hermes runs several agents (chhotu,
+jarvis, talos, bastion), and chhotu's shell runs in the whole home directory. A
+directory root cannot tell chhotu from jarvis, because they share one cwd.
+
+A workspace can be keyed on a declared agent instead. It names the agent with
+`agent:`, and the gate matches that name against the `JF_AGENT` environment
+variable:
+
+```yaml
+workspaces:
+  chhotu:
+    agent: chhotu        # matches JF_AGENT=chhotu
+    commands:
+      gog:
+        profiles: [gog-personal]
+        default: gog-personal
+```
+
+A workspace may have `roots:`, an `agent:`, or both. It needs at least one; a
+workspace with neither fails to load.
+
+### How JF_AGENT is matched
+
+The gate reads `JF_AGENT` before it looks at the directory:
+
+1. If `JF_AGENT` is set and equals some workspace's `agent:`, that workspace is
+   selected, whatever the working directory is.
+2. If `JF_AGENT` is unset, or set to a value no workspace agent equals, the gate
+   falls back to directory resolution, the original behavior.
+
+**Precedence: an explicit agent match wins over a directory-root match.** The agent
+is the more specific claim, because the harness states which agent it is rather than
+the gate guessing from a path. So `JF_AGENT=chhotu` selects the chhotu workspace even
+when the current directory sits inside another workspace's root.
+
+A set-but-unmatched `JF_AGENT` does not fail. It falls back to the directory, because
+a machine may set `JF_AGENT` for one tool and still run other commands normally.
+
+### Trust model
+
+`JF_AGENT` is **claimed, not proven**. Anything in that home directory can set
+`JF_AGENT=chhotu` and get chhotu's identity. This is the same soft-gate trust level
+as directory roots, which are also claimed: a process that runs in a workspace root
+already gets that workspace's identity. Both are acceptable on a single-user personal
+box, where every process is the one user's.
+
+A hard boundary would need a separate Unix user per agent, so the operating system,
+not an environment variable, proves who the caller is. That is the upgrade path, and
+it is out of scope here. This is the ambient-authority tension at the CLI layer:
+the gate prevents an accidental identity change, not a determined one.
+
+### Setting JF_AGENT on the Mac mini
+
+The mini's chhotu profile runs under a macOS LaunchAgent. Set `JF_AGENT=chhotu` in
+that plist's `EnvironmentVariables` dictionary, so every process the LaunchAgent
+starts inherits it:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+    <key>JF_AGENT</key>
+    <string>chhotu</string>
+</dict>
+```
+
+This document does not apply that change; it is mini-side configuration. After the
+plist is edited, reload the LaunchAgent (unload then load) so the new environment
+takes effect.
+
 ## Subcommand overrides
 
 A profile prefix fits the commands a person runs all day. It does not fit every
@@ -437,13 +510,16 @@ Reading needs a device token, so run `jf login` first. The install writes
 nothing back to the hub.
 
 For `gog-personal`, jf fetches the credential, parses the JSON it holds, and runs
-`gog auth import --refresh-token-stdin -a shreyansqt@gmail.com`. The refresh
+`gog auth import --refresh-token-stdin --email shreyansqt@gmail.com`. The refresh
 token goes to gog on standard input, never as an argument, so it never reaches
 the process list. gog refreshes its own access tokens from that refresh token
 afterwards; the hub mints no Google token.
 
+The import uses gog's own required `--email` flag, not the global `-a`. `-a`
+alone does not satisfy it: gog fails with "missing flags: --email=STRING".
+
 `jf cred install` calls the **real** gog binary directly, never the gog shim,
-because the import passes `-a` and `--client` and the shim denies both. It finds
+because the import passes `--client`, which the shim denies. It finds
 the real binary in this order: `GOG_BIN` if set, then `/opt/homebrew/bin/gog`,
 then gog on PATH — skipping any PATH entry that resolves to the jf binary, since
 every shim is a symlink to jf. If the only gog it can find is the shim, it stops
@@ -506,10 +582,12 @@ same `gog-personal` identity the MacBook uses. Steps on the mini:
 
 1. Install `jf` and the shims (the two installers in this document).
 2. `jf login` to sign the mini in to the hub as its own device.
-3. Point the `chhotu` workspace root in `jackfield.yaml` at chhotu's actual
-   working directory. The stanza is already in the manifest with a placeholder
-   root; a wrong root only makes `jf run gog` there say "this directory is in no
-   workspace", never picks a wrong identity.
+3. Set `JF_AGENT=chhotu` in the chhotu LaunchAgent's `EnvironmentVariables`, as
+   described in [Scope by agent, not only by directory](#scope-by-agent-not-only-by-directory).
+   The `chhotu` workspace in `jackfield.yaml` is keyed on `agent: chhotu`, so it
+   is selected whenever the agent runs, whatever its working directory is. Without
+   `JF_AGENT` set, `jf run gog` there says "this directory is in no workspace",
+   and never picks a wrong identity.
 4. `jf cred install gog-personal` to import the refresh token from the hub into
    gog on the mini.
 

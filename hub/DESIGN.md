@@ -361,21 +361,25 @@ schema change.
 parses the JSON, and runs:
 
 ```
-gog auth import --refresh-token-stdin -a shreyansqt@gmail.com --client default
+gog auth import --refresh-token-stdin --email shreyansqt@gmail.com --client default
 ```
 
 with the refresh token on standard input, never in the argument vector. gog then
 refreshes its own access tokens from that refresh token, with no further call to
 the hub. The install writes nothing back to the hub.
 
+The import needs gog's own required `--email` flag, not the global `-a/--account`
+flag. `-a` selects the account for a normal command and does not satisfy the
+import's `--email`; gog fails with "missing flags: --email=STRING" when only `-a`
+is given.
+
 `jf cred install` calls the **real** gog binary directly, never the jackfield
-shim. The import must pass `-a <email>` and `--client`, and the shim's gog
-profile denies both, so a shim on PATH makes the import fail with "argument -a
-can override the selected identity". jf resolves the real binary in the same
-order as the extract script: `GOG_BIN` when set, else `/opt/homebrew/bin/gog`,
-else gog on PATH — but it rejects any PATH candidate that resolves to the jf
-binary, because every shim is a symlink back to jf. The direct path also works on
-a machine that has no manifest yet, which is the state a fresh machine is in.
+shim. The import passes `--client`, which the shim's gog profile denies, so a
+shim on PATH makes the import fail. jf resolves the real binary in the same order
+as the extract script: `GOG_BIN` when set, else `/opt/homebrew/bin/gog`, else gog
+on PATH — but it rejects any PATH candidate that resolves to the jf binary,
+because every shim is a symlink back to jf. The direct path also works on a
+machine that has no manifest yet, which is the state a fresh machine is in.
 
 ### Getting the token into the hub the first time
 

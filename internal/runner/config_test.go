@@ -37,6 +37,128 @@ func testConfig(root string) Config {
 	}
 }
 
+// setAgent injects a JF_AGENT value for one test and restores the reader after.
+func setAgent(t *testing.T, value string) {
+	t.Helper()
+	previous := agentEnv
+	agentEnv = func() string { return value }
+	t.Cleanup(func() { agentEnv = previous })
+}
+
+// agentConfig adds a directory-less workspace keyed on agent: chhotu, plus a
+// second directory workspace, so a test can check the precedence between them.
+func agentConfig(root string) Config {
+	config := testConfig(root)
+	config.Workspaces["chhotu"] = Workspace{
+		Agent: "chhotu",
+		Commands: map[string]CommandSelection{
+			"gog": {Profiles: []string{"gog-personal"}, Default: "gog-personal"},
+		},
+	}
+	config.Profiles["gog-personal"] = Profile{Executable: "/bin/gog"}
+	return config
+}
+
+func TestResolveSelectsWorkspaceByAgent(t *testing.T) {
+	setAgent(t, "chhotu")
+	// The working directory is a temp dir in no workspace. Without the agent
+	// match this call would fail; the agent selects chhotu regardless of cwd.
+	resolution, err := agentConfig(t.TempDir()).Resolve(t.TempDir(), "gog", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Workspace != "chhotu" || resolution.Profile != "gog-personal" {
+		t.Fatalf("unexpected resolution: %+v", resolution)
+	}
+}
+
+// An agent match wins over a directory that would resolve to a different
+// workspace. The cwd is inside the "work" root, yet JF_AGENT=chhotu selects
+// chhotu, the more specific claim.
+func TestResolveAgentMatchBeatsDirectory(t *testing.T) {
+	setAgent(t, "chhotu")
+	root := t.TempDir()
+	resolution, err := agentConfig(root).Resolve(root, "gog", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Workspace != "chhotu" {
+		t.Fatalf("expected agent workspace to win, got %q", resolution.Workspace)
+	}
+}
+
+// A JF_AGENT value that no workspace agent equals falls back to directory
+// resolution rather than failing, so a machine may set it for one tool and run
+// others normally.
+func TestResolveUnmatchedAgentFallsBackToDirectory(t *testing.T) {
+	setAgent(t, "jarvis")
+	root := t.TempDir()
+	resolution, err := agentConfig(root).Resolve(root, "gog", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Workspace != "work" || resolution.Profile != "gog-work" {
+		t.Fatalf("unexpected resolution: %+v", resolution)
+	}
+}
+
+// No JF_AGENT behaves exactly as before: directory resolution alone.
+func TestResolveWithoutAgentUsesDirectory(t *testing.T) {
+	setAgent(t, "")
+	root := t.TempDir()
+	resolution, err := agentConfig(root).Resolve(root, "gog", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Workspace != "work" {
+		t.Fatalf("expected directory workspace, got %q", resolution.Workspace)
+	}
+}
+
+func TestLoadAcceptsAgentWorkspace(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(t.TempDir(), "jackfield.yaml")
+	manifest := fmt.Sprintf(`version: 1
+workspaces:
+  work:
+    roots: [%q]
+    commands:
+      tool:
+        profiles: [tool-work]
+  chhotu:
+    agent: chhotu
+    commands:
+      tool:
+        profiles: [tool-work]
+profiles:
+  tool-work:
+    executable: /bin/tool
+`, root)
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := Load(manifestPath)
+	if err != nil {
+		t.Fatalf("a manifest with an agent workspace must parse: %v", err)
+	}
+	if config.Workspaces["chhotu"].Agent != "chhotu" {
+		t.Fatalf("unexpected agent: %q", config.Workspaces["chhotu"].Agent)
+	}
+}
+
+func TestValidateRejectsWorkspaceWithNoRootsAndNoAgent(t *testing.T) {
+	config := testConfig(t.TempDir())
+	config.Workspaces["orphan"] = Workspace{
+		Commands: map[string]CommandSelection{
+			"gog": {Profiles: []string{"gog-work"}, Default: "gog-work"},
+		},
+	}
+	if err := config.validate(); err == nil || !strings.Contains(err.Error(), "no roots and no agent") {
+		t.Fatalf("expected a no-roots-no-agent error, got %v", err)
+	}
+}
+
 func TestResolveSelectsWorkspaceDefault(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "project")

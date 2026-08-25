@@ -10,6 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// agentEnv reads the JF_AGENT environment variable. It is a package variable so
+// that a test injects a value without touching the process environment, in the
+// same style as the color check that passes os.Getenv as a function.
+var agentEnv = func() string {
+	return strings.TrimSpace(os.Getenv("JF_AGENT"))
+}
+
 type Config struct {
 	Version    int                  `yaml:"version"`
 	Workspaces map[string]Workspace `yaml:"workspaces"`
@@ -26,6 +33,14 @@ type Config struct {
 type Workspace struct {
 	Roots    []string                    `yaml:"roots"`
 	Commands map[string]CommandSelection `yaml:"commands"`
+
+	// Agent names an agent identity that this workspace claims. When the
+	// JF_AGENT environment variable equals this value, the workspace is
+	// selected regardless of the working directory. A harness whose agents
+	// share one directory (Hermes on the Mac mini) cannot be told apart by
+	// path; the declared agent is the second scoping dimension for that case.
+	// A workspace may have roots, an agent, or both.
+	Agent string `yaml:"agent,omitempty"`
 }
 
 type CommandSelection struct {
@@ -136,8 +151,8 @@ func (config Config) validate() error {
 		}
 	}
 	for workspaceName, workspace := range config.Workspaces {
-		if len(workspace.Roots) == 0 {
-			return fmt.Errorf("workspace %q has no roots", workspaceName)
+		if len(workspace.Roots) == 0 && strings.TrimSpace(workspace.Agent) == "" {
+			return fmt.Errorf("workspace %q has no roots and no agent; give it at least one", workspaceName)
 		}
 		for commandName, selection := range workspace.Commands {
 			if len(selection.Profiles) == 0 {
@@ -174,10 +189,32 @@ func (config Config) Resolve(cwd string, commandName string, requestedProfile st
 	return resolution, err
 }
 
-func (config Config) ResolveArgs(cwd string, commandName string, requestedProfile string, args []string) (Resolution, []string, error) {
+// resolveWorkspace picks the workspace for this call. It has two dimensions.
+//
+// The first is the declared agent. When JF_AGENT is set and equals some
+// workspace's agent:, that workspace is selected. An explicit agent match wins
+// over a directory-root match, because it is the more specific claim: the
+// harness states which agent it is, rather than the gate guessing from a path.
+//
+// The second is the working directory, the original behavior. It applies when
+// JF_AGENT is unset, or set to a value that no workspace agent equals. A set-but-
+// unmatched JF_AGENT falls back to directory resolution rather than failing,
+// because a machine may set JF_AGENT for one tool and still run others normally.
+func (config Config) resolveWorkspace(cwd string) (string, error) {
+	if agent := agentEnv(); agent != "" {
+		for name, workspace := range config.Workspaces {
+			if workspace.Agent == agent {
+				return name, nil
+			}
+		}
+	}
+	return config.resolveWorkspaceByDirectory(cwd)
+}
+
+func (config Config) resolveWorkspaceByDirectory(cwd string) (string, error) {
 	canonicalCWD, err := canonicalPath(cwd)
 	if err != nil {
-		return Resolution{}, nil, fmt.Errorf("resolve working directory: %w", err)
+		return "", fmt.Errorf("resolve working directory: %w", err)
 	}
 
 	type match struct {
@@ -189,7 +226,7 @@ func (config Config) ResolveArgs(cwd string, commandName string, requestedProfil
 		for _, root := range workspace.Roots {
 			canonicalRoot, err := canonicalPath(root)
 			if err != nil {
-				return Resolution{}, nil, fmt.Errorf("resolve workspace %q root %q: %w", name, root, err)
+				return "", fmt.Errorf("resolve workspace %q root %q: %w", name, root, err)
 			}
 			if pathIsInside(canonicalCWD, canonicalRoot) {
 				matches = append(matches, match{name: name, rootLength: len(canonicalRoot)})
@@ -197,10 +234,17 @@ func (config Config) ResolveArgs(cwd string, commandName string, requestedProfil
 		}
 	}
 	if len(matches) == 0 {
-		return Resolution{}, nil, fmt.Errorf("the working directory %q is in no workspace of this manifest. Add a workspace whose roots: cover this directory, or change to a directory that a workspace already covers", canonicalCWD)
+		return "", fmt.Errorf("the working directory %q is in no workspace of this manifest. Add a workspace whose roots: cover this directory, or change to a directory that a workspace already covers", canonicalCWD)
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].rootLength > matches[j].rootLength })
-	workspaceName := matches[0].name
+	return matches[0].name, nil
+}
+
+func (config Config) ResolveArgs(cwd string, commandName string, requestedProfile string, args []string) (Resolution, []string, error) {
+	workspaceName, err := config.resolveWorkspace(cwd)
+	if err != nil {
+		return Resolution{}, nil, err
+	}
 	workspace := config.Workspaces[workspaceName]
 	selection, ok := workspace.Commands[commandName]
 	if !ok {

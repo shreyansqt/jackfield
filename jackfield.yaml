@@ -27,6 +27,22 @@ workspaces:
         profiles: [wrangler-personal]
         default: wrangler-personal
 
+  # grumpyorange (the Mac mini). The 'chhotu' agent runs a Hermes setup and needs
+  # gog for the personal Google account. Hermes runs several agents (chhotu,
+  # jarvis, talos, bastion) that share one home directory, so a directory root
+  # cannot tell them apart. This workspace is keyed on the agent instead: it is
+  # selected when JF_AGENT=chhotu, which the mini's chhotu LaunchAgent sets.
+  #
+  # The mini reads the same manifest, so this stanza is inert on the MacBook,
+  # where nothing sets JF_AGENT=chhotu. It gives chhotu the same gog-personal
+  # identity the MacBook uses.
+  chhotu:
+    agent: chhotu
+    commands:
+      gog:
+        profiles: [gog-personal]
+        default: gog-personal
+
 profiles:
   gog-smarta:
     executable: /opt/homebrew/bin/gog
