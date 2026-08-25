@@ -46,6 +46,13 @@ func commandArgs(program string, args []string) ([]string, error) {
 }
 
 func run(args []string) error {
+	// The version check runs first. `jf --version` carries no subcommand, and
+	// it must answer on a machine that has no manifest yet.
+	if isVersionRequest(args) {
+		printVersion(os.Stdout)
+		return nil
+	}
+
 	global := flag.NewFlagSet("jf", flag.ContinueOnError)
 	global.SetOutput(os.Stderr)
 	configPath := global.String("config", "", "Path to the Jackfield manifest")
@@ -53,7 +60,7 @@ func run(args []string) error {
 		return err
 	}
 	if global.NArg() == 0 {
-		return fmt.Errorf("use jf [--config PATH] run|resolve|login|status|devices|creds|auth [ARGS]")
+		return fmt.Errorf("use jf [--config PATH] run|resolve|login|status|devices|creds|auth [ARGS], or jf --version")
 	}
 
 	action := global.Arg(0)

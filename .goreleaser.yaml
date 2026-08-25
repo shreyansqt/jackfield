@@ -1,0 +1,82 @@
+# Release build for the jf CLI.
+#
+# install.sh builds its download URL from the archive name, so the name_template
+# below is a contract with that script. A change here needs the same change in
+# install.sh.
+version: 2
+
+project_name: jackfield
+
+before:
+  hooks:
+    # Verify rather than tidy. `go mod tidy` would rewrite a tracked file during
+    # a release, which makes the released commit differ from the tagged one.
+    - go mod verify
+    - go test ./...
+
+builds:
+  - id: jf
+    main: ./cmd/jf
+    binary: jf
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: jf
+    ids:
+      - jf
+    formats:
+      - tar.gz
+    # jf_darwin_arm64.tar.gz — no version in the name, so the
+    # /releases/latest/download/<asset> URL in install.sh stays constant.
+    name_template: "jf_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+      - docs/cli-gate.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: shreyansqt
+    name: jackfield
+  draft: false
+  prerelease: auto
+  header: |
+    ## Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/shreyansqt/jackfield/main/install.sh | sh
+    ```
+
+    Then set the hub and sign this machine in:
+
+    ```sh
+    export JF_HUB=https://your-hub.workers.dev
+    jf login
+    ```

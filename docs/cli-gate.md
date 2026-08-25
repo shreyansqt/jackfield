@@ -3,16 +3,40 @@
 `jf run` selects a CLI identity from the current directory. The pilot manifest is
 `jackfield.yaml`.
 
-Install the CLI and the automatic command shims:
+## Two installs, for two kinds of machine
+
+Installation has two steps, and most machines need only the first.
+
+**A plain machine installs `jf` alone.** One command, no clone and no Go toolchain:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/shreyansqt/jackfield/main/install.sh | sh
+```
+
+This puts `jf` in `~/.local/bin`. It is all a machine needs to reach the hub with
+`jf login`, `jf status`, and `jf creds`.
+
+**A machine that gates CLIs also installs the shims.** The shims make `gog`,
+`wrangler`, and `aws` run through the gate, so those commands cannot select
+another identity. Run the second script only on a machine that needs that:
 
 ```sh
 scripts/install-cli-shims.sh
 ```
 
-The installer builds `jf` under `~/.local/lib/jackfield`. It links the manifest under
-`~/.config/jackfield`. It adds `jf`, `gog`, `wrangler`, and `aws` links to
-`~/.local/jackfield/bin`. The dotfiles shell config puts this directory first on
-`PATH`.
+The installer links the manifest under `~/.config/jackfield`. It adds `jf`, `gog`,
+`wrangler`, and `aws` links to `~/.local/jackfield/bin`. The dotfiles shell config
+puts this directory first on `PATH`.
+
+The shim installer finds `jf` in this order:
+
+1. `JF_BINARY`, if it is set.
+2. A Go toolchain plus this repository: it builds `jf` from source.
+3. An installed `jf` on `PATH`, such as the one `install.sh` wrote.
+
+The source build comes first, because a developer who edits `jf` expects the shims
+to run the code just edited. A machine with no clone falls through to the installed
+binary. `JF_FROM_PATH=1` skips the build inside a clone.
 
 Use Jackfield directly:
 

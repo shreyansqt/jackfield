@@ -91,6 +91,61 @@ Stated plainly, because these are real:
 - **CLI execution itself.** The command runs where the work is.
 - **claude.ai-native connectors.** Figma stays an Anthropic connector.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/shreyansqt/jackfield/main/install.sh | sh
+```
+
+That is the whole install. It needs no Go toolchain, no clone, and no `sudo`.
+
+The script reads `uname` to pick the build for this machine, downloads the latest
+release from GitHub, checks the download against the published SHA-256 checksum, and
+puts the `jf` binary in `~/.local/bin`. It refuses to install a binary whose checksum
+does not match. It prints a `PATH` line only when `~/.local/bin` is not on `PATH`
+already. Run it again at any time to upgrade in place.
+
+Builds ship for macOS and Linux, on both Intel and ARM.
+
+Then point `jf` at your hub and sign this machine in:
+
+```sh
+export JF_HUB=https://your-hub.workers.dev
+jf login
+jf status
+```
+
+Put the hub in `~/.config/jackfield/jackfield.yaml` as a `hub:` key to set it for
+every shell rather than one. See [docs/cli-gate.md](docs/cli-gate.md) for both.
+
+### Read the script before you pipe it
+
+Piping a script from the network into `sh` runs code you have not read. If you would
+rather look first, or want a specific version:
+
+```sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/shreyansqt/jackfield/main/install.sh
+less install.sh
+sh install.sh
+```
+
+`JF_VERSION=v1.2.3` installs one release rather than the latest, and
+`JF_INSTALL_DIR` changes where the binary lands.
+
+### The other ways
+
+- **Download it yourself.** Every release on the
+  [releases page](https://github.com/shreyansqt/jackfield/releases) carries a
+  `jf_<os>_<arch>.tar.gz` archive and a `checksums.txt`. Unpack `jf` anywhere on
+  `PATH`.
+- **Build from source.** With a Go toolchain:
+  ```sh
+  go install github.com/shreyansqt/jackfield/cmd/jf@latest
+  ```
+- **The CLI shims are a separate, optional step.** `scripts/install-cli-shims.sh`
+  makes `gog`, `wrangler`, and `aws` run through the workspace gate. Only a machine
+  that gates those CLIs needs it. See [docs/cli-gate.md](docs/cli-gate.md).
+
 ## Current pilots
 
 Both pilots keep running until the hub replaces them. Nothing is torn down before its
