@@ -135,7 +135,7 @@ Open the verification URL in a browser and type the short code. Because Access
 is not configured yet, add the development sign-in token to the URL:
 
 ```
-https://YOUR-HUB/device?dev_token=YOUR_DEV_SIGNIN_TOKEN
+https://YOUR-HUB/ui/device?dev_token=YOUR_DEV_SIGNIN_TOKEN
 ```
 
 Approve the device. Then collect the token on the machine:
@@ -155,13 +155,16 @@ so it cannot show it to you again.
 
 Do this before you store a real credential.
 
+Every page a person opens lives under one path prefix, `/ui`. One Access
+application therefore covers all of them, and covers nothing else.
+
 1. In the Cloudflare dashboard, open **Zero Trust**, then **Access**, then
    **Applications**.
-2. Add a self-hosted application for your hub's hostname.
-3. Protect these paths: `/authorize`, `/device`, `/device/approve` and
-   `/approvals`.
-4. Add Google as the identity provider, and write a policy that allows only
-   your own email address.
+2. Add a self-hosted application for `YOUR-HUB/ui`.
+3. Write a policy that allows only your own email address.
+4. Choose a login method. **One-time PIN needs no identity provider**: Access
+   sends a code to the email address in your policy, and you type it in. Any
+   other login method works too, if you already have one configured.
 5. Copy two values from the application:
    - the **Application Audience (AUD) tag**, on the application's overview;
    - your **team domain**, on the Zero Trust settings page. It looks like
@@ -185,6 +188,24 @@ npx wrangler secret delete DEV_SIGNIN_TOKEN
 
 Both values are required. If either is empty or wrong, the hub refuses every
 browser sign-in, so a typo shows up as a 401 rather than as an open door.
+
+**Protect `/ui` only. Do not protect the whole hostname.** Your machines call
+`/device/code`, `/device/token`, `/creds/...`, `/status` and `/devices` with a
+device token and no browser. Access in front of those paths would block `jf`
+on every machine, because a script cannot complete an Access sign-in.
+
+One browser page stays outside `/ui`: `/authorize`, the OAuth consent page.
+Its address is fixed by the OAuth metadata that a connector reads, so moving it
+would break the connector registration that Phase 3 needs. It is not used in
+Phase 1. If you want Access in front of it as well, add `YOUR-HUB/authorize` as
+a second application with the same policy. The hub verifies the Access token on
+that page itself either way.
+
+**No identity configuration and no secret ever goes into this repository.**
+Your team domain and audience tag are not secrets, and they live in
+`wrangler.jsonc`. Your email address, your login method and your policy live in
+the Cloudflare dashboard. The encryption key lives in `wrangler secret put`.
+Nothing about who you are is committed.
 
 ### What the hub verifies
 
@@ -219,7 +240,7 @@ ticket.
 **In a browser**, which is what `jf auth` opens:
 
 ```
-https://YOUR-HUB/approvals?connection=slack-work
+https://YOUR-HUB/ui/approvals?connection=slack-work
 ```
 
 The page names the connection and asks you to approve. It then shows the
@@ -229,7 +250,7 @@ then, add `&dev_token=YOUR_DEV_SIGNIN_TOKEN` to that URL.
 **From a script**, the same endpoint answers JSON:
 
 ```bash
-curl -X POST https://YOUR-HUB/approvals \
+curl -X POST https://YOUR-HUB/ui/approvals \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $DEV_SIGNIN_TOKEN" \
   -d '{"connection":"slack-work"}'
@@ -278,10 +299,10 @@ revoke a lost laptop from the machine still in your hand.
 | --- | --- | --- |
 | `POST` | `/device/code` | anyone; it starts a login |
 | `POST` | `/device/token` | anyone holding the device code |
-| `GET` | `/device` | a person in a browser |
+| `GET` | `/ui/device` | a person in a browser |
 | `POST` | `/device/approve` | a person in a browser |
-| `GET` | `/approvals` | a person in a browser |
-| `POST` | `/approvals` | a person in a browser |
+| `GET` | `/ui/approvals` | a person in a browser |
+| `POST` | `/ui/approvals` | a person in a browser |
 | `GET` | `/creds/:connection` | a device token |
 | `PUT` | `/creds/:connection` | an approval ticket, never a device token |
 | `GET` | `/status` | a device token |

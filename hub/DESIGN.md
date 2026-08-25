@@ -173,6 +173,47 @@ connector's OAuth access token is the right credential.
 The Access token is now **verified**. `src/access.ts` does the verification and
 `authenticateHuman` in `src/auth.ts` calls it.
 
+### Every browser page lives under /ui
+
+Access protects a path prefix, so the routes are arranged to give it exactly
+one prefix to protect. Every page a person opens is under `/ui`:
+
+- `GET /ui/device` and `POST /ui/device/approve`
+- `GET /ui/approvals` and `POST /ui/approvals`
+
+Every machine endpoint stays outside it: `POST /device/code`,
+`POST /device/token`, `/creds/...`, `/status` and `/devices`. This split is not
+cosmetic. A machine calls those endpoints with a device token and no browser,
+and it cannot complete an Access sign-in. Access in front of them would stop
+`jf` working on every machine, which is the opposite of the goal.
+
+The old browser paths, `/device` and `/approvals`, answer a 301 redirect to
+their new homes so a stale bookmark still lands on the page. Only GET
+redirects. An old POST returns 404, because a redirect would silently drop the
+request body and an un-updated client would appear to work while doing
+nothing. The redirect table matches paths exactly rather than by prefix,
+because `/device` moved while `/device/code` and `/device/token` did not.
+
+One browser page stays outside `/ui`: `/authorize`, the OAuth consent page. Its
+address is published in the OAuth metadata a connector reads at registration
+time, so moving it would break the connector path that Phase 3 depends on. It
+is unused in Phase 1. A deployer who wants Access on it adds a second
+application; the hub verifies the token on that page either way, so the page is
+not unprotected, only unprotected *by Access*.
+
+### The login method is the deployer's choice
+
+The hub does not care which login method Access uses, because it verifies a
+signed token and reads the `email` claim. One-time PIN is the cheapest option
+and the one the README recommends: it needs no identity provider configuration
+at all, since Access emails a code to the address in the policy. Google or any
+other provider works identically from the hub's side.
+
+Nothing about the deployer's identity is committed to this repository. The team
+domain and the audience tag live in `wrangler.jsonc` and are not secrets. The
+email address, the policy and the login method live in the Cloudflare
+dashboard.
+
 ### The defect this closes
 
 The earlier code read the identity from the `Cf-Access-Authenticated-User-Email`

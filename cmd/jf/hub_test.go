@@ -67,8 +67,8 @@ func (fake *commandHub) serve(response http.ResponseWriter, request *http.Reques
 		encode.Encode(hub.DeviceCode{
 			DeviceCode:              "the-device-code",
 			UserCode:                "BCDF-GHJK",
-			VerificationURI:         fake.server.URL + "/device",
-			VerificationURIComplete: fake.server.URL + "/device?user_code=BCDF-GHJK",
+			VerificationURI:         fake.server.URL + "/ui/device",
+			VerificationURIComplete: fake.server.URL + "/ui/device?user_code=BCDF-GHJK",
 			ExpiresIn:               900,
 			Interval:                5,
 		})
@@ -533,7 +533,7 @@ func TestAuthSendsTheSecretWithTheApprovalTicket(t *testing.T) {
 	if len(environment.openedURLs) != 1 {
 		t.Fatalf("got opened URLs %v, want the hub's approval page", environment.openedURLs)
 	}
-	if !strings.Contains(environment.openedURLs[0], "/approvals?connection=slack-smarta") {
+	if !strings.Contains(environment.openedURLs[0], "/ui/approvals?connection=slack-smarta") {
 		t.Fatalf("got URL %q, want the approval page for this connection", environment.openedURLs[0])
 	}
 }

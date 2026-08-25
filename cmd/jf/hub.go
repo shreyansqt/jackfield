@@ -431,12 +431,12 @@ func runAuth(ctx context.Context, environment *hubEnvironment, args []string) er
 // copies the ticket it shows, and pastes it here. The secret itself never
 // passes through the browser.
 //
-// The page answers `GET /approvals?connection=<name>`. Its form then posts back
+// The page answers `GET /ui/approvals?connection=<name>`. Its form then posts back
 // to the same path, and the hub tells a browser apart from this client by the
 // Accept and Content-Type headers. This client always sends JSON headers, so it
 // keeps receiving the JSON answer.
 func collectApprovalTicket(environment *hubEnvironment, baseURL string, connection string) (string, error) {
-	approvalPageURL := fmt.Sprintf("%s/approvals?connection=%s", baseURL, url.QueryEscape(connection))
+	approvalPageURL := fmt.Sprintf("%s/ui/approvals?connection=%s", baseURL, url.QueryEscape(connection))
 
 	fmt.Fprintf(environment.Stdout, "Writing a credential needs a fresh browser approval, every time.\n\n")
 	fmt.Fprintf(environment.Stdout, "Approve the write for %q, then copy the ticket the page shows:\n\n", connection)

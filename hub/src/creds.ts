@@ -74,7 +74,7 @@ export async function handleGetCredential(
 /**
  * PUT /creds/:connection — write one credential.
  *
- * This requires an approval ticket from `POST /approvals`, which only a
+ * This requires an approval ticket from `POST /ui/approvals`, which only a
  * browser human can obtain. The ticket is spent here: it covers this one
  * connection, and `consumeApproval` deletes it whether or not it matched.
  *
@@ -137,7 +137,7 @@ export async function handlePutCredential(
 }
 
 /**
- * GET /approvals?connection=<name> — the page where a person approves a write.
+ * GET /ui/approvals?connection=<name> — the page where a person approves a write.
  *
  * `jf auth <connection>` opens this in a browser. The person sees which
  * connection is about to be written, and approves or closes the tab.
@@ -160,7 +160,7 @@ export async function handleApprovalPage(request: Request, env: Env): Promise<Re
         "Approve a credential write",
         `<h1>Approve a credential write</h1>
 <p>Name the connection you want to write.</p>
-<form method="get" action="/approvals">${carry}
+<form method="get" action="/ui/approvals">${carry}
   <label for="connection">Connection</label>
   <input type="text" id="connection" name="connection" autocomplete="off"
          placeholder="slack-work" required>
@@ -179,7 +179,7 @@ export async function handleApprovalPage(request: Request, env: Env): Promise<Re
 <strong>${escapeHtml(human.identity)}</strong>.</p>
 <p>The approval lasts five minutes and covers this one connection. It permits
 one write, and nothing else.</p>
-<form method="post" action="/approvals">${carry}
+<form method="post" action="/ui/approvals">${carry}
   <input type="hidden" name="connection" value="${escapeHtml(connection)}">
   <p><button type="submit">Approve this write</button></p>
 </form>
@@ -189,7 +189,7 @@ one write, and nothing else.</p>
 }
 
 /**
- * POST /approvals — a human in a browser approves one credential write.
+ * POST /ui/approvals — a human in a browser approves one credential write.
  *
  * The ticket is short-lived and covers exactly one connection.
  *
@@ -268,7 +268,7 @@ function prefersHtml(request: Request): boolean {
   return contentType.includes("application/x-www-form-urlencoded");
 }
 
-/** What a POST to /approvals carried, from one read of the body. */
+/** What a POST to /ui/approvals carried, from one read of the body. */
 interface ApprovalSubmission {
   connection: string | null;
   /** The development sign-in token, when a form body carried it. */

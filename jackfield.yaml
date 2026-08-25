@@ -1,5 +1,7 @@
 version: 1
 
+hub: https://jackfield-hub.hi-0c6.workers.dev
+
 workspaces:
   smarta:
     roots:

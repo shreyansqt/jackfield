@@ -42,7 +42,7 @@ async function loginDevice(name: string): Promise<string> {
   const start = (await startResponse.json()) as { device_code: string; user_code: string };
 
   const approveResponse = await call(
-    new Request(`${ORIGIN}/device/approve?dev_token=${DEV_TOKEN}`, {
+    new Request(`${ORIGIN}/ui/device/approve?dev_token=${DEV_TOKEN}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_code: start.user_code, device_name: name }),
@@ -68,7 +68,7 @@ async function loginDevice(name: string): Promise<string> {
 /** Obtains an approval ticket the way a browser human does. */
 async function approvalTicket(connection: string): Promise<string> {
   const response = await call(
-    new Request(`${ORIGIN}/approvals`, {
+    new Request(`${ORIGIN}/ui/approvals`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -109,7 +109,7 @@ describe("the device flow", () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(typeof body.device_code).toBe("string");
-    expect(body.verification_uri).toBe(`${ORIGIN}/device`);
+    expect(body.verification_uri).toBe(`${ORIGIN}/ui/device`);
     expect(body.interval).toBe(5);
     expect(body.expires_in).toBe(900);
     // The short code is the one a person reads aloud and types.
@@ -154,7 +154,7 @@ describe("the device flow", () => {
 
     // No dev_token, so no human identity: the approval page must not act.
     const approveResponse = await call(
-      new Request(`${ORIGIN}/device/approve`, {
+      new Request(`${ORIGIN}/ui/device/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_code: start.user_code }),
@@ -187,7 +187,7 @@ describe("the device flow", () => {
     const start = (await startResponse.json()) as { device_code: string; user_code: string };
 
     const approveResponse = await call(
-      new Request(`${ORIGIN}/device/approve?dev_token=${DEV_TOKEN}`, {
+      new Request(`${ORIGIN}/ui/device/approve?dev_token=${DEV_TOKEN}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_code: start.user_code, device_name: "grumpyorange" }),
@@ -354,7 +354,7 @@ describe("writing a credential needs a fresh approval", () => {
     const token = await loginDevice("macbook-no-approval");
 
     const response = await call(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -431,7 +431,7 @@ describe("writing a credential needs a fresh approval", () => {
 describe("the browser approval page", () => {
   it("shows a confirmation page for a signed-in human", async () => {
     const response = await call(
-      new Request(`${ORIGIN}/approvals?connection=slack-page&dev_token=${DEV_TOKEN}`, {
+      new Request(`${ORIGIN}/ui/approvals?connection=slack-page&dev_token=${DEV_TOKEN}`, {
         headers: { Accept: "text/html" },
       }),
     );
@@ -445,7 +445,7 @@ describe("the browser approval page", () => {
 
   it("refuses to show the page to a caller who is not signed in", async () => {
     const response = await call(
-      new Request(`${ORIGIN}/approvals?connection=slack-page`, {
+      new Request(`${ORIGIN}/ui/approvals?connection=slack-page`, {
         headers: { Accept: "text/html" },
       }),
     );
@@ -454,7 +454,7 @@ describe("the browser approval page", () => {
 
   it("mints a working ticket from the page's form submission", async () => {
     const formResponse = await call(
-      new Request(`${ORIGIN}/approvals?dev_token=${DEV_TOKEN}`, {
+      new Request(`${ORIGIN}/ui/approvals?dev_token=${DEV_TOKEN}`, {
         method: "POST",
         headers: {
           Accept: "text/html",
@@ -487,7 +487,7 @@ describe("the browser approval page", () => {
   it("still answers JSON to a client that is not a browser", async () => {
     // The `jf` client and curl must keep the original contract.
     const response = await call(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -506,7 +506,7 @@ describe("the browser approval page", () => {
   it("does not let the form path skip the sign-in", async () => {
     // A form submission with no identity must not mint a ticket.
     const response = await call(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         method: "POST",
         headers: {
           Accept: "text/html",
@@ -537,7 +537,7 @@ describe("the development sign-in survives a form submission", () => {
 
     // No dev_token in the URL. It is in the body, where the page put it.
     const approveResponse = await call(
-      new Request(`${ORIGIN}/device/approve`, {
+      new Request(`${ORIGIN}/ui/device/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -575,7 +575,7 @@ describe("the development sign-in survives a form submission", () => {
     const start = (await startResponse.json()) as { device_code: string; user_code: string };
 
     const approveResponse = await call(
-      new Request(`${ORIGIN}/device/approve`, {
+      new Request(`${ORIGIN}/ui/device/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ user_code: start.user_code }).toString(),
@@ -608,7 +608,7 @@ describe("the development sign-in survives a form submission", () => {
     const start = (await startResponse.json()) as { user_code: string };
 
     const approveResponse = await call(
-      new Request(`${ORIGIN}/device/approve`, {
+      new Request(`${ORIGIN}/ui/device/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -622,7 +622,7 @@ describe("the development sign-in survives a form submission", () => {
 
   it("mints an approval ticket when the token is only in the form body", async () => {
     const response = await call(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         method: "POST",
         headers: {
           Accept: "text/html",
@@ -652,7 +652,7 @@ describe("the development sign-in survives a form submission", () => {
 
     const pageResponse = await call(
       new Request(
-        `${ORIGIN}/device?user_code=${encodeURIComponent(start.user_code)}&dev_token=${DEV_TOKEN}`,
+        `${ORIGIN}/ui/device?user_code=${encodeURIComponent(start.user_code)}&dev_token=${DEV_TOKEN}`,
         { headers: { Accept: "text/html" } },
       ),
     );
@@ -677,7 +677,7 @@ describe("the development sign-in survives a form submission", () => {
 
     const ctx = createExecutionContext();
     const response = await worker.fetch(
-      new Request(`${ORIGIN}/approvals?connection=slack-access&dev_token=${DEV_TOKEN}`, {
+      new Request(`${ORIGIN}/ui/approvals?connection=slack-access&dev_token=${DEV_TOKEN}`, {
         headers: { Accept: "text/html" },
       }),
       accessEnv,
@@ -694,7 +694,7 @@ describe("the development sign-in survives a form submission", () => {
 
   it("puts the hidden field in both approval forms while Access is off", async () => {
     const withConnection = await call(
-      new Request(`${ORIGIN}/approvals?connection=slack-hidden&dev_token=${DEV_TOKEN}`, {
+      new Request(`${ORIGIN}/ui/approvals?connection=slack-hidden&dev_token=${DEV_TOKEN}`, {
         headers: { Accept: "text/html" },
       }),
     );
@@ -702,11 +702,151 @@ describe("the development sign-in survives a form submission", () => {
 
     // The GET form needs it too: a GET submission replaces the query string.
     const withoutConnection = await call(
-      new Request(`${ORIGIN}/approvals?dev_token=${DEV_TOKEN}`, {
+      new Request(`${ORIGIN}/ui/approvals?dev_token=${DEV_TOKEN}`, {
         headers: { Accept: "text/html" },
       }),
     );
     expect((await withoutConnection.text())).toContain(`name="dev_token"`);
+  });
+});
+
+describe("the /ui split, which is what Access protects", () => {
+  // Cloudflare Access protects exactly one prefix: /ui. Every browser page
+  // must therefore live under it, and every machine endpoint must live outside
+  // it — a machine has no browser and no Access session, so Access in front of
+  // a machine endpoint would lock out `jf` entirely.
+
+  it("keeps the machine endpoints outside /ui", async () => {
+    const codeResponse = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "outside-ui" }),
+      }),
+    );
+    expect(codeResponse.status).toBe(200);
+    const start = (await codeResponse.json()) as { device_code: string };
+
+    // The token endpoint answers outside /ui too, with no browser involved.
+    const tokenResponse = await call(
+      new Request(`${ORIGIN}/device/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: start.device_code,
+        }),
+      }),
+    );
+    expect(((await tokenResponse.json()) as { error: string }).error).toBe("authorization_pending");
+
+    // And the credential endpoints keep their paths.
+    await storeCredential("ui-split-cred", "secret", "one@example.com");
+    const token = await loginDevice("ui-split-device");
+    for (const path of ["/creds/ui-split-cred", "/status", "/devices"]) {
+      const response = await call(
+        new Request(`${ORIGIN}${path}`, { headers: { Authorization: `Bearer ${token}` } }),
+      );
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it("tells a machine to send its person to a /ui URL", async () => {
+    const response = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "url-check" }),
+      }),
+    );
+    const body = (await response.json()) as {
+      verification_uri: string;
+      verification_uri_complete: string;
+    };
+    expect(body.verification_uri).toBe(`${ORIGIN}/ui/device`);
+    expect(body.verification_uri_complete).toContain(`${ORIGIN}/ui/device?user_code=`);
+  });
+
+  it("points every rendered form at a /ui action", async () => {
+    const startResponse = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "form-action-check" }),
+      }),
+    );
+    const start = (await startResponse.json()) as { user_code: string };
+
+    const devicePage = await call(
+      new Request(
+        `${ORIGIN}/ui/device?user_code=${encodeURIComponent(start.user_code)}&dev_token=${DEV_TOKEN}`,
+        { headers: { Accept: "text/html" } },
+      ),
+    );
+    expect(await devicePage.text()).toContain(`action="/ui/device/approve"`);
+
+    const approvalPage = await call(
+      new Request(`${ORIGIN}/ui/approvals?connection=slack-action&dev_token=${DEV_TOKEN}`, {
+        headers: { Accept: "text/html" },
+      }),
+    );
+    expect(await approvalPage.text()).toContain(`action="/ui/approvals"`);
+  });
+
+  it("redirects the old browser paths so stale links still work", async () => {
+    const devicePage = await call(
+      new Request(`${ORIGIN}/device?user_code=BCDF-GHJK`, { redirect: "manual" }),
+    );
+    expect(devicePage.status).toBe(301);
+    expect(devicePage.headers.get("Location")).toBe(`${ORIGIN}/ui/device?user_code=BCDF-GHJK`);
+
+    const approvalsPage = await call(
+      new Request(`${ORIGIN}/approvals?connection=slack-old`, { redirect: "manual" }),
+    );
+    expect(approvalsPage.status).toBe(301);
+    expect(approvalsPage.headers.get("Location")).toBe(
+      `${ORIGIN}/ui/approvals?connection=slack-old`,
+    );
+  });
+
+  it("does not redirect a machine endpoint that shares the /device prefix", async () => {
+    // A prefix rule would wrongly move these. The match must be exact.
+    const response = await call(
+      new Request(`${ORIGIN}/device/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "no-redirect" }),
+        redirect: "manual",
+      }),
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("does not keep the old POST routes", async () => {
+    // A redirect would drop the body, so an un-updated client must fail
+    // loudly rather than appear to work.
+    const oldApprove = await call(
+      new Request(`${ORIGIN}/device/approve?dev_token=${DEV_TOKEN}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_code: "BCDF-GHJK" }),
+        redirect: "manual",
+      }),
+    );
+    expect(oldApprove.status).toBe(404);
+
+    const oldApprovals = await call(
+      new Request(`${ORIGIN}/approvals`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${DEV_TOKEN}`,
+        },
+        body: JSON.stringify({ connection: "slack-old-post" }),
+        redirect: "manual",
+      }),
+    );
+    expect(oldApprovals.status).toBe(404);
   });
 });
 

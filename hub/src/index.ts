@@ -52,19 +52,18 @@ const hubHandler: ExportedHandler<Env> = {
     const method = request.method;
 
     try {
-      /* ---------------- the device flow (RFC 8628) ---------------- */
+      /* ---------------- machine endpoints: the device flow ----------------
+       *
+       * These two stay OUTSIDE /ui. A headless machine calls them with no
+       * browser and no Access session, so Cloudflare Access must not sit in
+       * front of them. See the note above `hubHandler`.
+       */
 
       if (path === "/device/code" && method === "POST") {
         return await handleDeviceCode(request, env);
       }
       if (path === "/device/token" && method === "POST") {
         return await handleDeviceToken(request, env);
-      }
-      if (path === "/device" && method === "GET") {
-        return await handleDevicePage(request, env);
-      }
-      if (path === "/device/approve" && method === "POST") {
-        return await handleDeviceApprove(request, env);
       }
 
       /* ---------------- the browser OAuth authorize page ---------------- */
@@ -73,14 +72,41 @@ const hubHandler: ExportedHandler<Env> = {
         return await handleAuthorize(request, env);
       }
 
-      /* ---------------- credential writes need approval ---------------- */
+      /* ---------------- browser pages, all under /ui ----------------
+       *
+       * Everything a person opens in a browser lives here, so one Access
+       * application protecting `/ui` covers all of it and nothing else.
+       */
 
-      if (path === "/approvals") {
+      if (path === "/ui/device" && method === "GET") {
+        return await handleDevicePage(request, env);
+      }
+      if (path === "/ui/device/approve" && method === "POST") {
+        return await handleDeviceApprove(request, env);
+      }
+      if (path === "/ui/approvals") {
         // GET shows the approval page a person uses. POST mints the ticket,
         // for both that page's form and the `jf` client.
         if (method === "GET") return await handleApprovalPage(request, env);
         if (method === "POST") return await handleCreateApproval(request, env);
         return json({ error: "method_not_allowed" }, 405, { Allow: "GET, POST" });
+      }
+
+      /* ---------------- redirects from the old browser paths ----------------
+       *
+       * A stale bookmark or a printed link should land on the page, not on a
+       * 404. Only GET moves: a POST to an old path is a client that was not
+       * updated, and a redirect would silently drop its body, so those return
+       * 404 and the mistake stays visible.
+       */
+
+      if (method === "GET") {
+        const moved = movedBrowserPath(path);
+        if (moved) {
+          const target = new URL(request.url);
+          target.pathname = moved;
+          return Response.redirect(target.toString(), 301);
+        }
       }
 
       /* ---------------- the credential API ---------------- */
@@ -213,6 +239,24 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
     props: { identity: human.identity },
   });
   return Response.redirect(redirectTo, 302);
+}
+
+/**
+ * Maps an old browser path to its new home under /ui, or returns null.
+ *
+ * The match is exact, never a prefix. `/device` moved, but `/device/code` and
+ * `/device/token` are machine endpoints that stay where they are, and a prefix
+ * rule would wrongly redirect them.
+ */
+function movedBrowserPath(path: string): string | null {
+  switch (path) {
+    case "/device":
+      return "/ui/device";
+    case "/approvals":
+      return "/ui/approvals";
+    default:
+      return null;
+  }
 }
 
 /** Local escape helper, kept here to avoid a circular import. */

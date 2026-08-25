@@ -66,8 +66,8 @@ func (hub *fakeHub) serve(response http.ResponseWriter, request *http.Request) {
 		json.NewEncoder(response).Encode(DeviceCode{
 			DeviceCode:              "the-device-code",
 			UserCode:                "BCDF-GHJK",
-			VerificationURI:         hub.server.URL + "/device",
-			VerificationURIComplete: hub.server.URL + "/device?user_code=BCDF-GHJK",
+			VerificationURI:         hub.server.URL + "/ui/device",
+			VerificationURIComplete: hub.server.URL + "/ui/device?user_code=BCDF-GHJK",
 			ExpiresIn:               900,
 			Interval:                5,
 		})

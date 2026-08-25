@@ -13,7 +13,7 @@
  *   1. A headless machine calls POST /device/code. It receives a device code,
  *      a short user code, and a URL.
  *   2. The person reads the short code off that machine and types it into a
- *      browser on another device, at GET /device.
+ *      browser on another device, at GET /ui/device.
  *   3. The person approves. The hub mints a device token.
  *   4. The machine, which has been polling POST /device/token, collects the
  *      token on its next poll. The request record is then deleted.
@@ -43,7 +43,7 @@ export async function handleDeviceCode(request: Request, env: Env): Promise<Resp
   const requestedName = (form.get("device_name") ?? "").trim() || "unnamed device";
 
   const record = await startDeviceAuth(env.HUB_KV, requestedName);
-  const verificationUri = `${env.HUB_ORIGIN}/device`;
+  const verificationUri = `${env.HUB_ORIGIN}/ui/device`;
 
   return json({
     device_code: record.deviceCode,
@@ -106,8 +106,8 @@ export async function handleDeviceToken(request: Request, env: Env): Promise<Res
 }
 
 /**
- * GET /device — the page where the person types the short code.
- * GET /device?user_code=BCDF-GHJK jumps straight to the confirmation.
+ * GET /ui/device — the page where the person types the short code.
+ * GET /ui/device?user_code=BCDF-GHJK jumps straight to the confirmation.
  */
 export async function handleDevicePage(request: Request, env: Env): Promise<Response> {
   const human = await authenticateHuman(request, env);
@@ -122,7 +122,7 @@ export async function handleDevicePage(request: Request, env: Env): Promise<Resp
         "Approve a device",
         `<h1>Approve a device</h1>
 <p>Type the code shown on the machine you are signing in.</p>
-<form method="post" action="/device/approve">${carry}
+<form method="post" action="/ui/device/approve">${carry}
   <label for="user_code">Device code</label>
   <input type="text" id="user_code" name="user_code" autocomplete="off"
          autocapitalize="characters" placeholder="BCDF-GHJK" required>
@@ -154,7 +154,7 @@ machine to get a new code.</p>`,
 <p>It named itself <strong>${escapeHtml(record.requestedName)}</strong>. You can
 change the name before you approve. The name is what
 <code>jf devices</code> shows.</p>
-<form method="post" action="/device/approve">${carry}
+<form method="post" action="/ui/device/approve">${carry}
   <input type="hidden" name="user_code" value="${escapeHtml(record.userCode)}">
   <label for="device_name">Device name</label>
   <input type="text" id="device_name" name="device_name"
@@ -168,7 +168,7 @@ token can read every credential in this hub.</p>`,
 }
 
 /**
- * POST /device/approve — the person approves, and the hub mints the token.
+ * POST /ui/device/approve — the person approves, and the hub mints the token.
  *
  * The form is read BEFORE the identity check, because a request body can be
  * read only once and the development sign-in token may arrive inside it. The

@@ -150,7 +150,7 @@ describe("Access verification accepts only a real token", () => {
     const token = await signToken(signer);
 
     const caller = await authenticateHuman(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         headers: {
           "Cf-Access-Jwt-Assertion": token,
           // A lie. The claims win, so the caller is shreyans@example.com.
@@ -172,7 +172,7 @@ describe("Access verification accepts only a real token", () => {
     const forged = await signToken({ ...otherSigner, kid: signer.kid });
 
     const caller = await authenticateHuman(
-      new Request(`${ORIGIN}/approvals`, { headers: { "Cf-Access-Jwt-Assertion": forged } }),
+      new Request(`${ORIGIN}/ui/approvals`, { headers: { "Cf-Access-Jwt-Assertion": forged } }),
       accessEnv(),
     );
 
@@ -256,7 +256,7 @@ describe("Access verification accepts only a real token", () => {
   it("reads the token from the CF_Authorization cookie when the header is absent", async () => {
     const token = await signToken(signer);
     const caller = await authenticateHuman(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         headers: { Cookie: `other=x; CF_Authorization=${token}` },
       }),
       accessEnv(),
@@ -274,7 +274,7 @@ describe("Access verification accepts only a real token", () => {
 describe("the forged header, which is what this work closes", () => {
   it("refuses a caller who sends only Cf-Access-Authenticated-User-Email", async () => {
     const caller = await authenticateHuman(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         headers: { "Cf-Access-Authenticated-User-Email": "attacker@example.com" },
       }),
       accessEnv(),
@@ -284,7 +284,7 @@ describe("the forged header, which is what this work closes", () => {
 
   it("refuses that caller at the approvals endpoint, so no ticket is minted", async () => {
     const response = await call(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -303,7 +303,7 @@ describe("the forged header, which is what this work closes", () => {
   it("mints a ticket for a caller who holds a verified token", async () => {
     const token = await signToken(signer);
     const response = await call(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -321,7 +321,7 @@ describe("the forged header, which is what this work closes", () => {
 
   it("ignores the development sign-in token once Access is on", async () => {
     const caller = await authenticateHuman(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         headers: { Authorization: "Bearer test-dev-signin-token" },
       }),
       // Even with the secret still set, the Access branch never reads it.
@@ -380,7 +380,7 @@ describe("the JWKS cache", () => {
 describe("the development sign-in still works when Access is off", () => {
   it("accepts the development token", async () => {
     const caller = await authenticateHuman(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         headers: { Authorization: "Bearer test-dev-signin-token" },
       }),
       env,
@@ -391,7 +391,7 @@ describe("the development sign-in still works when Access is off", () => {
 
   it("ignores an Access header when Access is off", async () => {
     const caller = await authenticateHuman(
-      new Request(`${ORIGIN}/approvals`, {
+      new Request(`${ORIGIN}/ui/approvals`, {
         headers: { "Cf-Access-Authenticated-User-Email": "attacker@example.com" },
       }),
       env,
