@@ -129,6 +129,13 @@ func runLogin(ctx context.Context, environment *hubEnvironment, deviceCodeFlow b
 		name = defaultDeviceName(environment)
 	}
 
+	// The token this machine already holds is read before the new one replaces
+	// it. A second `jf login` would otherwise leave the old device alive at the
+	// hub, and nothing on this machine could reach it again: the file that named
+	// it is gone. A machine with no token yet reads an empty string here, which
+	// is the normal first login.
+	previousToken, _ := hub.LoadToken(tokenPath)
+
 	client := hub.New(baseURL, "")
 	code, err := client.StartDeviceAuth(ctx, name)
 	if err != nil {
@@ -175,7 +182,52 @@ func runLogin(ctx context.Context, environment *hubEnvironment, deviceCodeFlow b
 	fmt.Fprintf(environment.Stdout, "\n%s This machine is signed in as %q.\n",
 		style.Alive.Render("Done."), approvedName)
 	fmt.Fprintf(environment.Stdout, "The device token is in %s.\n", tokenPath)
+
+	revokePreviousToken(ctx, environment, baseURL, previousToken, token.AccessToken)
 	return nil
+}
+
+// revokePreviousToken removes the device that this machine held before.
+//
+// A second `jf login` replaces the token file, and the old device would stay
+// alive at the hub with nothing on this machine able to name it. So the old
+// token revokes itself, with its own authority, while it still works.
+//
+// This never fails the login. The new token is already saved and working by the
+// time this runs, so a hub that refuses the revoke costs one stale device in the
+// list, not the sign-in the person asked for. The message says what to run.
+func revokePreviousToken(ctx context.Context, environment *hubEnvironment, baseURL string, previousToken string, newToken string) {
+	// Nothing to revoke on a first login, and nothing to do when the hub handed
+	// back the same token.
+	if previousToken == "" || previousToken == newToken {
+		return
+	}
+
+	// The old token is the authority here, not the new one. It names the device
+	// it belongs to, so the hub marks that device as the caller.
+	client := hub.New(baseURL, previousToken)
+	devices, err := client.ListDevices(ctx)
+	if err != nil {
+		reportStaleDevice(environment, err)
+		return
+	}
+	for _, device := range devices {
+		if !device.Current {
+			continue
+		}
+		if err := client.RevokeDevice(ctx, device.DeviceID); err != nil {
+			reportStaleDevice(environment, err)
+			return
+		}
+		fmt.Fprintf(environment.Stdout, "Revoked this machine's previous device token (%s).\n", device.DeviceID)
+		return
+	}
+}
+
+// reportStaleDevice says that the old device is still registered.
+func reportStaleDevice(environment *hubEnvironment, err error) {
+	fmt.Fprintf(environment.Stderr, "jf: could not revoke this machine's previous device token (%v).\n", err)
+	fmt.Fprintln(environment.Stderr, "jf: the hub may still list the old device. Run `jf device list` to see it, then `jf device revoke NAME`.")
 }
 
 // defaultDeviceName names this machine for the device list.

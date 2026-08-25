@@ -31,12 +31,29 @@ type commandHub struct {
 	putBody          map[string]string
 	revokedDeviceIDs []string
 	tokenPolls       int
+
+	// revokeTokens records the bearer token that each revoke arrived with, so a
+	// test can tell which token did the revoking.
+	revokeTokens []string
+	// revokeFails makes every revoke fail, for the tests that check jf survives
+	// a hub that refuses.
+	revokeFails bool
+	// listTokens records the bearer token of each device listing.
+	listTokens []string
+	// newAccessToken is the token the hub hands back to `jf login`.
+	newAccessToken string
+}
+
+// bearerToken returns the token that a request carried, without the scheme.
+func bearerToken(request *http.Request) string {
+	return strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer ")
 }
 
 func newCommandHub(t *testing.T) *commandHub {
 	t.Helper()
 	fake := &commandHub{
-		approved: true,
+		approved:       true,
+		newAccessToken: "jfd_the-device-token",
 		credential: hub.Credential{
 			Connection: "slack-smarta",
 			Secret:     "xoxp-from-the-hub",
@@ -81,7 +98,7 @@ func (fake *commandHub) serve(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		encode.Encode(hub.DeviceToken{
-			AccessToken: "jfd_the-device-token",
+			AccessToken: fake.newAccessToken,
 			TokenType:   "Bearer",
 			DeviceName:  "grumpyorange",
 		})
@@ -90,10 +107,17 @@ func (fake *commandHub) serve(response http.ResponseWriter, request *http.Reques
 		encode.Encode(fake.status)
 
 	case request.URL.Path == "/devices" && request.Method == http.MethodGet:
+		fake.listTokens = append(fake.listTokens, bearerToken(request))
 		encode.Encode(hub.DeviceList{Devices: fake.devices})
 
 	case strings.HasPrefix(request.URL.Path, "/devices/") && request.Method == http.MethodDelete:
 		deviceID := strings.TrimPrefix(request.URL.Path, "/devices/")
+		if fake.revokeFails {
+			response.WriteHeader(http.StatusInternalServerError)
+			encode.Encode(map[string]string{"error": "server_error", "error_description": "the hub refused"})
+			return
+		}
+		fake.revokeTokens = append(fake.revokeTokens, bearerToken(request))
 		fake.revokedDeviceIDs = append(fake.revokedDeviceIDs, deviceID)
 		encode.Encode(map[string]string{"revoked": deviceID})
 
@@ -310,6 +334,114 @@ func TestLoginNamesTheMachineByItsShortHostname(t *testing.T) {
 	environment := newTestEnvironment(t, fake, "")
 	if name := defaultDeviceName(environment.hubEnvironment); name != "grumpyorange" {
 		t.Fatalf("got name %q, want grumpyorange", name)
+	}
+}
+
+// A second `jf login` must not leave the old device alive at the hub.
+//
+// The token file is replaced, so after a re-login nothing on this machine can
+// name the old device. It has to revoke itself, with its own authority, while it
+// still works.
+func TestLoginRevokesTheTokenItReplaces(t *testing.T) {
+	fake := newCommandHub(t)
+	environment := newTestEnvironment(t, fake, "")
+
+	// This machine already holds a token from an earlier login.
+	if err := hub.SaveToken(environment.tokenPath, "jfd_the-old-token"); err != nil {
+		t.Fatal(err)
+	}
+	fake.newAccessToken = "jfd_the-new-token"
+
+	if err := environment.execute(t, "login"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The new token is the one on disk.
+	token, err := hub.LoadToken(environment.tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "jfd_the-new-token" {
+		t.Fatalf("got token %q, want the new one", token)
+	}
+
+	// The old device is gone from the hub.
+	if len(fake.revokedDeviceIDs) != 1 || fake.revokedDeviceIDs[0] != "aaa" {
+		t.Fatalf("got revoked ids %v, want [aaa] for the replaced device", fake.revokedDeviceIDs)
+	}
+	// The OLD token did the revoking. The new one names a different device, so
+	// revoking with it would remove the wrong machine.
+	if len(fake.revokeTokens) != 1 || fake.revokeTokens[0] != "jfd_the-old-token" {
+		t.Fatalf("got revoke tokens %v, want the old token to revoke itself", fake.revokeTokens)
+	}
+	if !strings.Contains(environment.stdout.String(), "previous device token") {
+		t.Fatalf("got %q, want the revoke reported", environment.stdout.String())
+	}
+}
+
+// A first login has nothing to revoke.
+func TestLoginRevokesNothingOnAFreshMachine(t *testing.T) {
+	fake := newCommandHub(t)
+	environment := newTestEnvironment(t, fake, "")
+
+	if err := environment.execute(t, "login"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.revokedDeviceIDs) != 0 {
+		t.Fatalf("a first login must revoke nothing, revoked %v", fake.revokedDeviceIDs)
+	}
+}
+
+// A hub that hands back the same token has replaced nothing, so revoking it
+// would sign this machine straight back out.
+func TestLoginRevokesNothingWhenTheTokenIsUnchanged(t *testing.T) {
+	fake := newCommandHub(t)
+	environment := newTestEnvironment(t, fake, "")
+
+	if err := hub.SaveToken(environment.tokenPath, "jfd_the-device-token"); err != nil {
+		t.Fatal(err)
+	}
+	fake.newAccessToken = "jfd_the-device-token"
+
+	if err := environment.execute(t, "login"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.revokedDeviceIDs) != 0 {
+		t.Fatalf("an unchanged token must revoke nothing, revoked %v", fake.revokedDeviceIDs)
+	}
+}
+
+// The revoke is a courtesy, not the point of the command. A hub that refuses it
+// must not fail the sign-in the person asked for.
+func TestLoginSurvivesAFailedRevokeOfTheOldToken(t *testing.T) {
+	fake := newCommandHub(t)
+	fake.revokeFails = true
+	environment := newTestEnvironment(t, fake, "")
+
+	if err := hub.SaveToken(environment.tokenPath, "jfd_the-old-token"); err != nil {
+		t.Fatal(err)
+	}
+	fake.newAccessToken = "jfd_the-new-token"
+
+	if err := environment.execute(t, "login"); err != nil {
+		t.Fatalf("a failed revoke must not fail the login: %v", err)
+	}
+
+	// The login did its job: the new token is saved.
+	token, err := hub.LoadToken(environment.tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "jfd_the-new-token" {
+		t.Fatalf("got token %q, want the new one saved despite the failed revoke", token)
+	}
+	// The person is told, on stderr, and told what to run.
+	report := environment.stderr.String()
+	if !strings.Contains(report, "could not revoke") {
+		t.Fatalf("got %q, want the failure reported on stderr", report)
+	}
+	if !strings.Contains(report, "jf device revoke") {
+		t.Fatalf("got %q, want the message to name `jf device revoke`", report)
 	}
 }
 

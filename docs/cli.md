@@ -17,7 +17,7 @@ answers `jf help COMMAND`, and the whole tool answers `man jf`. An agent reads
 - [Hub commands](#hub-commands) — [`login`](#jf-login), [`logout`](#jf-logout),
   [`status`](#jf-status), [`device`](#jf-device), [`cred`](#jf-cred)
 - [Other commands](#other-commands) — [`schema`](#jf-schema), [`man`](#jf-man),
-  [`completion`](#jf-completion), [`--version`](#jf---version), [`help`](#jf-help)
+  [`completion`](#jf-completion), [`version`](#jf-version), [`help`](#jf-help)
 - [Output and colour](#output-and-colour)
 - [Files](#files)
 - [Environment variables](#environment-variables)
@@ -55,7 +55,7 @@ jf [--config PATH] COMMAND [ARGS...]
 | Global flag | What it does |
 | --- | --- |
 | `--config PATH` | Read this manifest instead of searching for `jackfield.yaml` |
-| `--version`, `-v` | Print the version of `jf` |
+| `--version`, `-v` | Print the version of `jf`. `jf version` prints the same string |
 | `--help`, `-h` | Print the overview |
 
 `jf` with no arguments prints the overview.
@@ -183,6 +183,15 @@ URL in both flows, so a browser that fails to open costs one copy and paste.
 
 A spinner turns while `jf` waits for the approval. On a pipe or in a script the
 spinner prints its line once instead, so a log file gets no animation.
+
+A second `jf login` on a machine that already holds a token revokes the old one
+at the hub. The token file is replaced, so nothing on this machine could name the
+old device afterwards, and it would stay in `jf device list` forever. The old
+token revokes itself while it still works.
+
+That revoke never fails the sign-in. When the hub refuses it, `jf` says so on
+standard error and names `jf device revoke NAME`, and the new token is already
+saved and working.
 
 ### `jf logout`
 
@@ -437,15 +446,17 @@ zsh:
 jf completion zsh > "${fpath[1]}/_jf"
 ```
 
-### `jf --version`
+### `jf version`
 
 ```
+jf version
 jf --version
 jf -v
 ```
 
-Print the version of `jf`. A release build prints its tag. A build from source
-prints the version that Go recorded, or `dev`.
+Print the version of `jf`. All three forms print the same string. A release build
+prints its tag. A build from source prints the version that Go recorded, or
+`dev`.
 
 ### `jf help`
 

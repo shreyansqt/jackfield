@@ -81,10 +81,38 @@ func newRootCommand(environment *hubEnvironment) *cobra.Command {
 		newResolveCommand(environment, manifest),
 		newSchemaCommand(),
 		newManCommand(),
+		newVersionCommand(environment),
 		newAuthAliasCommand(environment, optionalManifest),
 	)
 
 	return root
+}
+
+// newVersionCommand prints the version.
+//
+// `jf --version` prints the same string, and fang supplies that flag. The word
+// exists as well because a person types `jf version` out of habit, and because
+// the older documents name it. A tool that answers one form and not the other
+// makes the reader guess which one this tool takes.
+func newVersionCommand(environment *hubEnvironment) *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version of jf",
+		Long: `Print the version of this jf binary.
+
+A release build prints its tag. A build from source prints the version that Go
+recorded, or "dev" when Go recorded none.
+
+"jf --version" prints the same string.`,
+		Example: `  # Print the version.
+  jf version`,
+		Args:                  cobra.NoArgs,
+		DisableFlagsInUseLine: true,
+		RunE: func(command *cobra.Command, args []string) error {
+			_, err := fmt.Fprintf(environment.Stdout, "jf version %s\n", versionString())
+			return err
+		},
+	}
 }
 
 // newManCommand prints the manual page.

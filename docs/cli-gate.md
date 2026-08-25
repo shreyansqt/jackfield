@@ -187,6 +187,9 @@ wrangler whoami            # runs without --profile
 wrangler r2 bucket list    # runs with --profile default
 ```
 
+Those two lines report different things, and the difference catches people out.
+[What `wrangler whoami` reports](#what-wrangler-whoami-reports) explains it.
+
 Only `gog auth add` has a gog rule today. Two other commands were considered and
 rejected:
 
@@ -211,8 +214,32 @@ commands only.** `wrangler r2 bucket list` in the smarta workspace always carrie
 This is a limit in wrangler, not a gap left open here. Wrangler rejects `--profile`
 on those commands, so there is no argument the gate could add to make the login
 profile-safe. Do not work around it with an environment variable or a wrapper: the
-next wrangler release would change the answer without warning. Check `wrangler
-whoami` after a login, and know which account you signed in as.
+next wrangler release would change the answer without warning.
+
+### What `wrangler whoami` reports
+
+`wrangler whoami` runs without `--profile`, for the same reason `wrangler login`
+does: wrangler rejects that flag on the command. So **`wrangler whoami` reports the
+machine's default authentication store, not the profile that this workspace
+selects.** The answer does not change when you change directory.
+
+The command that answers "which identity does this directory get" is `jf resolve
+wrangler`. It reads the manifest and names the profile, and it starts no process.
+
+```sh
+cd ~/workspaces/side-projects
+jf resolve wrangler        # names the personal profile: the identity resource commands get
+wrangler whoami            # names the default store: unrelated to this workspace
+```
+
+A live example. After the smarta default store was re-authenticated, `wrangler
+whoami` in the side-projects workspace reported the smarta email, while
+`wrangler r2 bucket list` in that same directory correctly used the personal
+profile. Both were right. They answer different questions.
+
+So do not read `whoami` as a check on the gate. Use it to see which account a
+`wrangler login` signed the machine in as, which is the one thing it does report
+faithfully, and use `jf resolve wrangler` for everything else.
 
 `wrangler auth keyring` controls whether OAuth credentials reach the OS keychain.
 That matters on a headless machine, where the macOS keychain needs an unlocked login

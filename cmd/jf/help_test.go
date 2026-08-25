@@ -92,6 +92,8 @@ func TestTheCommandTreeIsTheAgreedShape(t *testing.T) {
 		"jf run",
 		"jf resolve",
 		"jf schema",
+		"jf man",
+		"jf version",
 	}
 
 	found := map[string]bool{}
@@ -117,7 +119,7 @@ func TestHelpNamesEveryCommand(t *testing.T) {
 	}
 
 	text := out.String()
-	for _, name := range []string{"status", "login", "logout", "device", "cred", "run", "resolve", "schema"} {
+	for _, name := range []string{"status", "login", "logout", "device", "cred", "run", "resolve", "schema", "man", "version"} {
 		if !strings.Contains(text, name) {
 			t.Errorf("the overview does not list %q", name)
 		}
@@ -165,7 +167,7 @@ func TestSchemaDescribesTheWholeTree(t *testing.T) {
 	}
 	collect(document.Commands)
 
-	for _, path := range []string{"jf status", "jf login", "jf logout", "jf device list", "jf device revoke", "jf cred get", "jf cred set", "jf run", "jf resolve"} {
+	for _, path := range []string{"jf status", "jf login", "jf logout", "jf device list", "jf device revoke", "jf cred get", "jf cred set", "jf run", "jf resolve", "jf man", "jf version"} {
 		command, found := paths[path]
 		if !found {
 			t.Errorf("the schema has no %q", path)
