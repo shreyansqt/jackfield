@@ -15,6 +15,37 @@ type Config struct {
 type Profile struct {
 	Name         string
 	AllowedRoots []string `json:"allowed_roots"`
+	// TokenFile is optional. It names a file that holds a secret for clients, such as
+	// Cursor, that cannot report their workspace. The secret must be 32 to 256 bytes.
+	TokenFile string `json:"token_file"`
+	token     []byte
+}
+
+const (
+	minTokenLength = 32
+	maxTokenLength = 256
+)
+
+func loadToken(path string) ([]byte, error) {
+	if !filepath.IsAbs(path) {
+		return nil, fmt.Errorf("token file path must be absolute")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("token file must not be readable by group or others (use chmod 600)")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	token := []byte(strings.TrimSpace(string(data)))
+	if len(token) < minTokenLength || len(token) > maxTokenLength {
+		return nil, fmt.Errorf("token must be %d to %d bytes", minTokenLength, maxTokenLength)
+	}
+	return token, nil
 }
 
 func LoadPolicy(path string, profileName string) (Profile, error) {
@@ -43,6 +74,13 @@ func LoadPolicy(path string, profileName string) (Profile, error) {
 			return Profile{}, fmt.Errorf("allowed root %q: %w", root, err)
 		}
 		profile.AllowedRoots[index] = canonical
+	}
+	if profile.TokenFile != "" {
+		token, err := loadToken(profile.TokenFile)
+		if err != nil {
+			return Profile{}, fmt.Errorf("token file %q: %w", profile.TokenFile, err)
+		}
+		profile.token = token
 	}
 	return profile, nil
 }

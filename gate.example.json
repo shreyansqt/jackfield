@@ -3,7 +3,8 @@
     "smarta": {
       "allowed_roots": [
         "/Users/shreyans/workspaces/smarta"
-      ]
+      ],
+      "token_file": "/Users/shreyans/.config/jackfield/tokens/smarta"
     },
     "side-projects": {
       "allowed_roots": [

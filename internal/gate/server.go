@@ -63,7 +63,11 @@ func newMCPServer(profile Profile, serverName string) *server.MCPServer {
 }
 
 func newHTTPHandler(mcpServer *server.MCPServer) http.Handler {
-	streamable := server.NewStreamableHTTPServer(mcpServer, server.WithEndpointPath("/mcp"))
+	streamable := server.NewStreamableHTTPServer(
+		mcpServer,
+		server.WithEndpointPath("/mcp"),
+		server.WithHTTPContextFunc(withTokenFromRequest),
+	)
 	return localRequestsOnly(advertiseCodexSandboxCapability(streamable))
 }
 
@@ -96,11 +100,11 @@ func localHostname(hostPort string) bool {
 func authorizeTools(profile Profile) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			identity, err := discoverIdentity(ctx, request)
+			identity, err := discoverIdentity(ctx, profile, request)
 			if err != nil {
 				return mcp.NewToolResultError("Jackfield denied this call. " + err.Error()), nil
 			}
-			if !profile.Allows(identity.Paths) {
+			if !identity.Granted && !profile.Allows(identity.Paths) {
 				return mcp.NewToolResultErrorf(
 					"Jackfield denied this call. The %s path is outside profile %q.",
 					identity.Source,

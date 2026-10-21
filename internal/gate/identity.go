@@ -2,7 +2,9 @@ package gate
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -15,6 +17,8 @@ const codexSandboxMetaKey = "codex/sandbox-state-meta"
 type Identity struct {
 	Source string
 	Paths  []string
+	// Granted is true when the source proved access without paths, as a token does.
+	Granted bool
 }
 
 func identityFromCodexMeta(meta *mcp.Meta) (Identity, bool, error) {
@@ -87,9 +91,47 @@ func identityFromRoots(ctx context.Context) (Identity, error) {
 	return Identity{Source: "mcp-roots", Paths: paths}, nil
 }
 
-func discoverIdentity(ctx context.Context, request mcp.CallToolRequest) (Identity, error) {
+func discoverIdentity(ctx context.Context, profile Profile, request mcp.CallToolRequest) (Identity, error) {
+	// A client that sends the token header has chosen the token source. A wrong token
+	// is a denial. It never falls back to another source.
+	if presented, sent := tokenFromContext(ctx); sent {
+		return identityFromToken(profile, presented)
+	}
 	if identity, found, err := identityFromCodexMeta(request.Params.Meta); found {
 		return identity, err
 	}
 	return identityFromRoots(ctx)
+}
+
+// TokenHeader carries the workspace token for clients that cannot report their workspace.
+const TokenHeader = "X-Jackfield-Workspace-Token"
+
+type tokenContextKey struct{}
+
+// withTokenFromRequest copies the token header into the context of an MCP request.
+func withTokenFromRequest(ctx context.Context, request *http.Request) context.Context {
+	values, sent := request.Header[http.CanonicalHeaderKey(TokenHeader)]
+	if !sent {
+		return ctx
+	}
+	presented := ""
+	if len(values) == 1 {
+		presented = values[0]
+	}
+	return context.WithValue(ctx, tokenContextKey{}, presented)
+}
+
+func tokenFromContext(ctx context.Context) (string, bool) {
+	presented, ok := ctx.Value(tokenContextKey{}).(string)
+	return presented, ok
+}
+
+func identityFromToken(profile Profile, presented string) (Identity, error) {
+	if len(profile.token) == 0 {
+		return Identity{}, fmt.Errorf("profile %q does not accept workspace tokens", profile.Name)
+	}
+	if subtle.ConstantTimeCompare([]byte(presented), profile.token) != 1 {
+		return Identity{}, fmt.Errorf("the workspace token is not valid")
+	}
+	return Identity{Source: "workspace-token", Granted: true}, nil
 }

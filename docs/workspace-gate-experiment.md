@@ -147,3 +147,18 @@ predict. This manifest change lands early in Phase 2.
 Nothing here is torn down before the replacement works. Keep running the StackBar service
 and the tests in this document until Slack calls go through the hub and pass the same
 checks.
+
+## Cursor: workspace token (21.10.2026)
+
+Cursor sends no roots and no sandbox metadata, so the gate denied every Cursor call.
+A profile can now set `token_file`. The file holds a secret of 32 to 256 bytes and must
+be mode `0600`. A client that sends the secret in the `X-Jackfield-Workspace-Token`
+header is allowed for that profile.
+
+- A wrong or empty token is a denial. It never falls back to roots or Codex metadata.
+- A profile without `token_file` rejects every token.
+- A missing, short or group-readable token file stops the gate at start. It fails closed.
+- Put the header only in the workspace's `.cursor/mcp.json`, never in `~/.cursor/mcp.json`.
+  A global entry would give every workspace the token.
+- This is a stronger signal than a claimed path, but the same limit applies. A process
+  of the same macOS user can read the token file.
