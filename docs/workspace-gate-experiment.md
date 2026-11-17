@@ -14,7 +14,9 @@ The gate identifies the calling workspace before each tool call.
 - Codex supplies `codex/sandbox-state-meta` with a `sandboxCwd` file URI.
 - The gate resolves path links and compares full path segments.
 - The gate denies a call when the client supplies no supported workspace signal.
-- The gate denies all roots when one root is outside the selected profile.
+- The gate allows a call when at least one root is inside the selected profile.
+  (Changed 17.11.2026: T3 Code adds its attachments folder as a second root, so the
+  old "all roots inside" rule denied every T3 Code call.)
 - The gate rejects non-local host names and browser origins.
 
 The server advertises the Codex experimental capability during MCP initialization.

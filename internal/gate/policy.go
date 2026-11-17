@@ -109,21 +109,16 @@ func pathIsInside(path string, root string) bool {
 	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
 }
 
+// Allows reports whether at least one path is inside the profile. Harnesses add their
+// own folders as extra roots (T3 Code adds its attachments folder), so the gate does
+// not require every root to be inside the profile.
 func (profile Profile) Allows(paths []string) bool {
-	if len(paths) == 0 {
-		return false
-	}
 	for _, path := range paths {
-		allowed := false
 		for _, root := range profile.AllowedRoots {
 			if pathIsInside(path, root) {
-				allowed = true
-				break
+				return true
 			}
 		}
-		if !allowed {
-			return false
-		}
 	}
-	return true
+	return false
 }
